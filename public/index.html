@@ -932,89 +932,35 @@
             let newGameState = JSON.parse(JSON.stringify(gameState)); // Deep copy
             let players = newGameState.players;
 
-            for (let i = 0; i < 40; i++) { // Max path length
+            // Loop limited to 40 steps to prevent infinite bounces
+            for (let i = 0; i < 40; i++) { 
                 r += dx;
                 c += dy;
                 path.push([r, c]);
 
-                // 1. Check Out of Bounds (Walls)
-                if (r < 0 || r >= BOARD_ROWS || c < 0 || c >= BOARD_COLS) {
-                    const [prevR, prevC] = path[path.length - 2];
-                    logMsgs.push(`Laser hits wall at (${prevR},${prevC})`);
+                // 1. Check Out of Bounds (Walls) & Handle Reflection
+                const r_out = r < 0 || r >= BOARD_ROWS;
+                const c_out = c < 0 || c >= BOARD_COLS;
 
-                    if (dx !== 0 && dy !== 0) { // Diagonal hit
-                        let r_hit = r < 0 || r >= BOARD_ROWS;
-                        let c_hit = c < 0 || c >= BOARD_COLS;
+                if (r_out || c_out) {
+                    const [prevR, prevC] = path[path.length - 2]; // Get last valid spot
+                    
+                    logMsgs.push(`Laser reflects off boundary.`);
 
-                        if (r_hit) {
-                            dx = -dx; // Hit T/B wall, flip vertical (user's spec)
-                            logMsgs.push(`Laser reflects off N/S wall.`);
-                        }
-                        if (c_hit) {
-                            dy = -dy; // Hit L/R wall, flip horizontal (inferred)
-                            logMsgs.push(`Laser reflects off E/W wall.`);
-                        }
-                        
-                        // Correction: user's spec from 2025-11-13T06:46Z
-                        // "a laser that is going diagonally right-down... hits the side-boundary... will continue... going right-up."
-                        // Right-down (SE) = [1, 1]
-                        // Side-boundary (c_hit)
-                        // Right-up (NE) = [-1, 1]
-                        // This means dx flips. dx = -dx.
-                        
-                        // "diagonally hitting a board boundary... flipping vertical direction."
-                        // This implies if c_hit, flip dx. if r_hit, flip dy.
-                        
-                        // Let's reset logic to match latest user request
-                        dx = direction[0]; // Reset dx
-                        dy = direction[1]; // Reset dy
-                        
-                        if (r_hit) {
-                            dx = -dx; // Hit T/B wall, flip vertical
-                            logMsgs.push(`Laser reflects off N/S wall.`);
-                        }
-                        if (c_hit) {
-                            dy = -dy; // Hit L/R wall, flip horizontal
-                            logMsgs.push(`Laser reflects off E/W wall.`);
-                        }
-                        // This logic is for orthogonal reflection.
-                        // User's logic: "diagonal... hits side... flipping vertical"
-                        // [1, 1] (SE) hits side (c_hit) -> [ -1, 1 ] (NE)
-                        // This means if c_hit, dx = -dx.
-                        // if r_hit, dy = -dy.
-                        
-                        // Let's re-read again.
-                        // "diagonally hitting a board boundary, the laser continues down the same row along the wall, but flipping vertical direction."
-                        // This text is contradictory.
-                        // Let's follow the EXAMPLE: "right-down... hits the side-boundary... going right-up."
-                        // [1, 1] (SE) -> hits side -> [-1, 1] (NE). This is dx = -dx.
-                        // Let's assume hitting T/B wall flips horizontal:
-                        // [1, 1] (SE) -> hits bottom -> [1, -1] (SW). This is dy = -dy.
-                        
-                        // Reset dx/dy again to implement this
-                        dx = direction[0];
-                        dy = direction[1];
+                    // Reflect vector
+                    if (r_out) dx = -dx; // Hit Top/Bottom -> Flip Vertical
+                    if (c_out) dy = -dy; // Hit Side -> Flip Horizontal
 
-                        if (r_hit) { // Hit T/B
-                            dy = -dy; 
-                            logMsgs.push(`Laser reflects off N/S wall.`);
-                        }
-                        if (c_hit) { // Hit L/R
-                            dx = -dx; 
-                            logMsgs.push(`Laser reflects off E/W wall.`);
-                        }
-
-                        // Recalculate new position from *previous* valid cell
-                        r = prevR + dx;
-                        c = prevC + dy;
-                        path[path.length-1] = [r,c]; // Correct the path
-                        direction = [dx, dy]; // Update direction for next loop
-                        continue;
-                    }
-
-                    // Orthogonal hit on back/side wall
-                    logMsgs.push(`Laser dissipates out of bounds.`);
-                    break;
+                    // Reset position to the wall (previous valid cell) so the next step comes OUT of the wall
+                    r = prevR;
+                    c = prevC;
+                    
+                    // Update direction for next iteration
+                    direction = [dx, dy]; 
+                    
+                    // Note: We leave the out-of-bounds coordinate in 'path' 
+                    // so the visual animation looks like it hits the edge before turning.
+                    continue;
                 }
 
                 // 2. Check for Unit Hit
@@ -1078,7 +1024,7 @@
                             break;
                         }
                         
-                        // Mirror reflects (Fixed logic)
+                        // Mirror reflects
                         // Implements NE (-1, 1) -> SE (1, 1) and E (0, 1) -> W (0, -1)
                         if (dx === 0) { // E or W
                             dy = -dy; // Flip horizontal
@@ -1086,7 +1032,6 @@
                             dx = -dx; // Flip vertical
                         }
                         direction = [dx, dy]; // Update direction
-                        logMsgs.push(`Beam reflects...`);
                         continue; // Continue path
                     }
                 }
