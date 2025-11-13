@@ -1,1 +1,2 @@
-# Zero-Sum-Defense
+# Prior to running
+npm install -g firebase-tools

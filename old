@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Connect Game - Lobbies</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f9fb;
+        }
+        .card {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 2, 0.06);
+            border-radius: 1rem;
+        }
+        .btn-primary {
+            transition: all 0.15s ease-in-out;
+            background-color: #3b82f6;
+        }
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 5px 15px rgba(59, 130, 246, 0.4);
+        }
+        .btn-disabled {
+             opacity: 0.6;
+             cursor: not-allowed;
+             transform: none !important;
+             box-shadow: none !important;
+        }
+        .btn-start {
+             background-color: #10b981; /* Emerald 500 */
+        }
+        .btn-start:hover {
+             box-shadow: 0 5px 15px rgba(16, 185, 129, 0.4);
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+    <div id="app" class="w-full max-w-lg bg-white card p-8 space-y-6">
+        <h1 class="text-3xl font-bold text-center text-gray-800">Real-Time Connect Demo</h1>
+        <p class="text-center text-sm text-gray-500">Host or join a game below.</p>
+
+        <!-- Loading/Auth Status -->
+        <div id="status" class="w-full text-center p-3 font-medium rounded-lg bg-indigo-100 text-indigo-700">
+            Initializing...
+        </div>
+
+        <!-- Global Error Message -->
+        <p class="text-xs text-red-500 text-center" id="error-message"></p>
+
+        <!-- --- 1. Main Menu Screen --- -->
+        <div id="main-menu" class="space-y-4" style="display: none;">
+            <h2 class="text-xl font-semibold text-center mt-4">Choose Game Mode</h2>
+            <button onclick="showScreen('multiplayer-screen')" class="w-full bg-blue-600 text-white p-4 rounded-lg font-semibold btn-primary">
+                Multiplayer
+            </button>
+            <button disabled class="w-full bg-gray-400 text-gray-700 p-4 rounded-lg font-semibold btn-disabled">
+                Singleplayer (Against AI) - Coming Soon
+            </button>
+        </div>
+
+        <!-- --- 2. Multiplayer / Lobby Screen --- -->
+        <div id="multiplayer-screen" class="space-y-4" style="display: none;">
+            <button onclick="showScreen('main-menu')" class="mb-4 text-sm text-blue-600 hover:text-blue-800 transition duration-150">← Back to Menu</button>
+            
+            <button id="host-btn" onclick="hostGame()" class="w-full bg-green-500 text-white p-3 rounded-lg font-semibold btn-primary">
+                Host New Game
+            </button>
+            
+            <h2 class="text-lg font-semibold mt-4 text-gray-700">Open Lobbies (Max 3)</h2>
+            <div id="lobbies-container" class="space-y-2 border border-gray-200 p-3 rounded-lg bg-gray-50 min-h-[100px]">
+                <!-- Lobbies will be injected here -->
+                <p class="text-center text-gray-500 italic">Looking for open games...</p>
+            </div>
+            <p class="text-center text-xs text-gray-500" id="current-user-info"></p>
+        </div>
+        
+        <!-- --- 3. Game Area Screen --- -->
+        <div id="game-area" class="space-y-6 p-6 border border-gray-200 rounded-xl" style="display: none;">
+            <button onclick="leaveGame()" class="mb-4 text-sm text-red-600 hover:text-red-800 transition duration-150">← Leave Game</button>
+
+            <div class="flex justify-between items-center pb-4 border-b">
+                <p class="text-sm font-mono text-gray-600">
+                    Game ID: <span id="current-game-id" class="font-bold text-gray-800"></span>
+                </p>
+                <p class="text-lg font-bold" id="player-label">Fetching Game Data...</p>
+            </div>
+
+            <h2 class="text-xl font-semibold text-center" id="game-message"></h2>
+            
+            <div class="flex justify-around items-center text-center">
+                <div class="p-4 bg-gray-50 rounded-lg w-full mr-2">
+                    <p class="font-medium">Host (<span id="p1-name">?</span>) Ready:</p>
+                    <p id="p1-status" class="text-2xl font-bold text-red-500">NO</p>
+                </div>
+                <div class="p-4 bg-gray-50 rounded-lg w-full ml-2">
+                    <p class="font-medium">Guest (<span id="p2-name">?</span>) Ready:</p>
+                    <p id="p2-status" class="text-2xl font-bold text-red-500">NO</p>
+                </div>
+            </div>
+
+            <button id="ready-btn" onclick="debouncedToggleReady()" class="w-full bg-indigo-600 text-white p-3 rounded-lg font-semibold btn-primary">
+                Toggle Ready Status
+            </button>
+            
+            <!-- NEW: Start Game Button (Hidden by default, only for Host) -->
+            <button id="start-game-btn" onclick="startGame()" class="w-full bg-green-500 text-white p-3 rounded-lg font-semibold btn-primary btn-start" style="display:none;">
+                START GAME
+            </button>
+        </div>
+    </div>
+
+    <!-- Firebase SDK Imports and Game Logic -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, onSnapshot, collection, addDoc, getDoc, query, where, Timestamp, setLogLevel, updateDoc, runTransaction } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Custom Firebase Configuration START ---
+        // Configuration copied directly from your Firebase project settings.
+        const CUSTOM_FIREBASE_CONFIG = {
+            apiKey: "AIzaSyBTK04oSfdM5K0w8sspYn42OQzCGFf8AMM",
+            authDomain: "zero-sum-defense.firebaseapp.com",
+            projectId: "zero-sum-defense",
+            storageBucket: "zero-sum-defense.firebasestorage.app",
+            messagingSenderId: "484724724929",
+            appId: "1:484724724929:web:104009b0c91ee8559a3040"
+        };
+        
+        // The appId must match the path used in your Firestore Security Rules.
+        const appId = "zero-sum-defense"; 
+        const firebaseConfig = CUSTOM_FIREBASE_CONFIG;
+        const initialAuthToken = null; 
+
+        const FIREBASE_COLLECTION_NAME = 'games'; 
+
+        let app;
+        let db;
+        let auth;
+        let currentUserId = null;
+        let currentUserName = null;
+        let currentGameId = null;
+        let isPlayer1 = false; // Global flag to track host/guest role
+        let isAuthReady = false; 
+        
+        let unsubscribeGameListener = null; 
+        let unsubscribeLobbyListener = null; 
+        
+        // Make functions globally accessible
+        window.hostGame = hostGame;
+        window.joinLobby = joinLobby;
+        window.showScreen = showScreen;
+        window.leaveGame = leaveGame;
+        window.startGame = startGame;
+        
+        // --- RATE LIMITING / DEBOUNCE UTILITY ---
+        let lastCallTime = 0;
+        const DEBOUNCE_DELAY = 1000; // 1 second limit
+        
+        window.debouncedToggleReady = function() {
+            const now = Date.now();
+            if (now - lastCallTime < DEBOUNCE_DELAY) {
+                displayError("Please wait a moment before changing your ready status again.");
+                return;
+            }
+            lastCallTime = now;
+            toggleReady();
+        }
+        // --- END RATE LIMITING ---
+
+        // --- UTILITIES ---
+
+        function generateRandomName() {
+            const adjectives = ['Cool', 'Quick', 'Salty', 'Brave', 'Sharp', 'Jolly', 'Silent'];
+            const nouns = ['Panda', 'Eagle', 'Ninja', 'Ghost', 'Wizard', 'Robot', 'Star'];
+            const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+            const noun = nouns[Math.floor(Math.random() * nouns.length)];
+            return `${adj}${noun}${Math.floor(Math.random() * 100)}`;
+        }
+
+        function updateStatus(message, colorClass = 'bg-indigo-100 text-indigo-700') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = `w-full text-center p-3 font-medium rounded-lg ${colorClass} transition duration-150 ease-in-out`;
+        }
+        
+        function displayError(message) {
+            const errorEl = document.getElementById('error-message');
+            errorEl.textContent = message;
+            setTimeout(() => errorEl.textContent = '', 5000); // Clear after 5 seconds
+        }
+
+        function showScreen(screenId) {
+            document.getElementById('main-menu').style.display = 'none';
+            document.getElementById('multiplayer-screen').style.display = 'none';
+            document.getElementById('game-area').style.display = 'none';
+
+            const screenEl = document.getElementById(screenId);
+            if (screenEl) {
+                screenEl.style.display = 'block';
+            }
+            
+            if (screenId === 'multiplayer-screen') {
+                if (isAuthReady) { 
+                    fetchLobbies();
+                }
+            } else {
+                if (unsubscribeLobbyListener) {
+                    unsubscribeLobbyListener();
+                    unsubscribeLobbyListener = null;
+                }
+            }
+        }
+        
+        // --- 1. INITIALIZATION & AUTHENTICATION (Always Anonymous) ---
+
+        async function initializeAppAndAuth() {
+            setLogLevel('Debug'); 
+
+            try {
+                if (Object.keys(firebaseConfig).length === 0) {
+                    throw new Error("Firebase configuration is missing or invalid.");
+                }
+
+                app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        currentUserId = user.uid;
+                        currentUserName = generateRandomName(); 
+                        isAuthReady = true; 
+                        
+                        updateStatus(`Connected! ID: ${currentUserId.substring(0, 8)}... | Nick: ${currentUserName}`, 'bg-green-100 text-green-700');
+                        document.getElementById('current-user-info').textContent = `Your ID: ${currentUserId} | Nickname: ${currentUserName}`;
+                        
+                        showScreen('main-menu');
+                    } else {
+                        await signInAnonymously(auth);
+                    }
+                });
+            } catch (error) {
+                console.error("Firebase initialization or auth failed:", error);
+                updateStatus(`Error: Initialization failed. ${error.message}`, 'bg-red-100 text-red-700');
+            }
+        }
+
+        initializeAppAndAuth();
+        
+        // --- 2. LOBBY LIST & FETCHING ---
+
+        function fetchLobbies() {
+            if (!isAuthReady) {
+                console.warn("fetchLobbies called before Auth was ready.");
+                return;
+            }
+
+            if (unsubscribeLobbyListener) {
+                unsubscribeLobbyListener();
+                unsubscribeLobbyListener = null;
+            }
+            
+            // Public data path: /artifacts/{appId}/public/data/games
+            const gamesCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', FIREBASE_COLLECTION_NAME);
+            
+            // Query for games that are waiting (p2Id is null) AND not already started (status is 'waiting')
+            const q = query(
+                gamesCollectionRef,
+                where("p2Id", "==", null),
+                where("status", "==", "waiting") 
+            );
+
+            unsubscribeLobbyListener = onSnapshot(q, (querySnapshot) => {
+                const games = [];
+                querySnapshot.forEach((doc) => {
+                    // Only show lobbies that the current user didn't host
+                    if (doc.data().p1Id !== currentUserId) {
+                       games.push({ id: doc.id, ...doc.data() });
+                    }
+                });
+                renderLobbies(games);
+            }, (error) => {
+                console.error("Lobby onSnapshot error:", error);
+                displayError("Error fetching lobbies. (Permissions Issue)"); 
+                document.getElementById('lobbies-container').innerHTML = `<p class="text-center text-red-500 italic">Error fetching lobbies. (Check permissions)</p>`;
+            });
+        }
+        
+        function renderLobbies(games) {
+            const container = document.getElementById('lobbies-container');
+            container.innerHTML = ''; 
+
+            if (games.length === 0) {
+                container.innerHTML = `<p class="text-center text-gray-500 italic">No open lobbies. Be the first to host!</p>`;
+                return;
+            }
+
+            games.forEach(game => {
+                const lobbyEl = document.createElement('div');
+                lobbyEl.className = 'flex justify-between items-center p-3 bg-white border border-blue-200 rounded-lg cursor-pointer hover:bg-blue-50 transition';
+                lobbyEl.innerHTML = `
+                    <p class="font-medium text-gray-800">Host: ${game.p1Name} ${game.p1Ready ? '(Ready)' : ''}</p>
+                    <button onclick="joinLobby('${game.id}')" class="bg-blue-500 text-white text-xs px-3 py-1 rounded-full hover:bg-blue-600 transition">
+                        Join Game
+                    </button>
+                `;
+                container.appendChild(lobbyEl);
+            });
+        }
+
+        // --- 3. GAME ACTIONS ---
+
+        async function hostGame() {
+            if (!isAuthReady) return displayError("Authentication not ready. Please wait for 'Connected!' status.");
+
+            try {
+                updateStatus('Creating new game document...', 'bg-yellow-100 text-yellow-700');
+                
+                const gamesCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', FIREBASE_COLLECTION_NAME);
+                
+                const newGameRef = await addDoc(gamesCollectionRef, {
+                    p1Id: currentUserId,
+                    p1Name: currentUserName,
+                    p2Id: null,
+                    p2Name: null,
+                    p1Ready: false,
+                    p2Ready: false,
+                    createdAt: Timestamp.now(),
+                    status: 'waiting' // Default status
+                });
+
+                currentGameId = newGameRef.id;
+                isPlayer1 = true; // Set role when hosting
+
+                updateStatus(`Game hosted! ID: ${currentGameId}`, 'bg-purple-100 text-purple-700'); 
+                await enterGameArea(newGameRef.id); // Wait for role check
+                listenToGame(newGameRef.id);
+
+            } catch (error) {
+                console.error("Error hosting game (addDoc):", error);
+                displayError(`Failed to host game: Missing or insufficient permissions. (Details: ${error.message})`);
+                updateStatus(`Error hosting game.`, 'bg-red-100 text-red-700');
+            }
+        }
+
+        async function joinLobby(gameId) {
+            if (!isAuthReady) return displayError("Authentication not ready. Please wait for 'Connected!' status.");
+            
+            if (gameId === currentGameId) return; 
+
+            try {
+                updateStatus(`Attempting to join game: ${gameId}...`, 'bg-yellow-100 text-yellow-700');
+
+                const gameDocRef = doc(db, 'artifacts', appId, 'public', 'data', FIREBASE_COLLECTION_NAME, gameId);
+                
+                await runTransaction(db, async (transaction) => {
+                    const docSnap = await transaction.get(gameDocRef);
+                    if (!docSnap.exists()) {
+                        throw "Game not found or deleted.";
+                    }
+
+                    const gameData = docSnap.data();
+
+                    if (gameData.p2Id !== null && gameData.p2Id !== currentUserId) {
+                        throw "Game is full! Another player joined just now.";
+                    }
+                    if (gameData.p1Id === currentUserId) {
+                        throw "You are the host! Rejoining as P1."; 
+                    }
+                    
+                    // Proceed to join as P2 if P2 slot is free or if current user is P2 rejoining
+                    if (gameData.p2Id === null) {
+                        transaction.update(gameDocRef, {
+                            p2Id: currentUserId,
+                            p2Name: currentUserName
+                        });
+                    }
+                });
+                
+                // If transaction succeeded
+                currentGameId = gameId;
+
+                updateStatus(`Successfully joined game! ID: ${gameId}`, 'bg-teal-100 text-teal-700');
+                await enterGameArea(gameId); // Wait for role check
+                listenToGame(gameId);
+                
+            } catch (error) {
+                console.error("Error joining game (runTransaction):", error);
+                let msg = error.message || error;
+                if (typeof error === 'string') msg = error;
+                displayError(`Failed to join: Missing or insufficient permissions during join/update. (${msg})`);
+                updateStatus(`Join failed. Try another lobby.`, 'bg-red-100 text-red-700');
+                
+                if (msg.includes("You are the host! Rejoining as P1.")) {
+                    // If they are P1 but tried to join, we explicitly set the role and re-enter
+                    currentGameId = gameId;
+                    await enterGameArea(gameId);
+                    listenToGame(gameId);
+                    updateStatus(`Rejoined as Player 1 (Host). ID: ${gameId}`, 'bg-purple-100 text-purple-700');
+                }
+            }
+        }
+        
+        async function toggleReady() {
+            if (!currentGameId || !isAuthReady) return;
+            
+            const gameDocRef = doc(db, 'artifacts', appId, 'public', 'data', FIREBASE_COLLECTION_NAME, currentGameId);
+            
+            try {
+                const docSnap = await getDoc(gameDocRef);
+                if (!docSnap.exists()) return;
+                
+                const data = docSnap.data();
+                let fieldToUpdate = null;
+                let currentState = false;
+                
+                if (data.status !== 'waiting') return displayError("Cannot change status, the game has already started.");
+
+                if (data.p1Id === currentUserId) {
+                    fieldToUpdate = 'p1Ready';
+                    currentState = data.p1Ready;
+                    // isPlayer1 is already set by enterGameArea/hostGame, no need to set here
+                } else if (data.p2Id === currentUserId) {
+                    fieldToUpdate = 'p2Ready';
+                    currentState = data.p2Ready;
+                    // isPlayer1 is already set by enterGameArea/joinLobby, no need to set here
+                } else {
+                    return displayError("You are not part of this game!");
+                }
+                
+                await updateDoc(gameDocRef, {
+                    [fieldToUpdate]: !currentState 
+                });
+                
+                updateStatus(`Ready status toggled to: ${!currentState}`, 'bg-blue-100 text-blue-700');
+
+            } catch (error) {
+                console.error("Error toggling ready status (updateDoc):", error);
+                displayError(`Failed to update status: Missing or insufficient permissions. (Details: ${error.message})`);
+            }
+        }
+        
+        async function startGame() {
+            if (!currentGameId || !isPlayer1) return displayError("Only the Host (Player 1) can start the game.");
+
+            const gameDocRef = doc(db, 'artifacts', appId, 'public', 'data', FIREBASE_COLLECTION_NAME, currentGameId);
+
+            try {
+                const docSnap = await getDoc(gameDocRef);
+                if (!docSnap.exists()) return handleGameEnd("Game does not exist.");
+
+                const data = docSnap.data();
+                if (data.p2Id === null) return displayError("Cannot start: Waiting for Player 2 to join.");
+                if (!data.p1Ready || !data.p2Ready) return displayError("Cannot start: Both players must be ready.");
+                if (data.status !== 'waiting') return displayError("The game has already started!");
+
+                // Update status to 'playing'
+                await updateDoc(gameDocRef, {
+                    status: 'playing',
+                    // Initialize game-specific state here (e.g., board, turn)
+                    turn: data.p1Id // Example: Host starts
+                });
+
+                updateStatus(`Game started!`, 'bg-green-100 text-green-700');
+
+            } catch (error) {
+                console.error("Error starting game (updateDoc):", error);
+                displayError(`Failed to start game: Missing or insufficient permissions. (Details: ${error.message})`);
+            }
+        }
+
+
+        function leaveGame() {
+            if (unsubscribeGameListener) {
+                unsubscribeGameListener();
+                unsubscribeGameListener = null;
+            }
+            
+            currentGameId = null;
+            isPlayer1 = false;
+            showScreen('multiplayer-screen');
+        }
+
+        // --- 4. REAL-TIME SYNCHRONIZATION & RENDERING ---
+
+        function listenToGame(gameId) {
+            if (unsubscribeGameListener) {
+                unsubscribeGameListener();
+                unsubscribeGameListener = null;
+            }
+            
+            const gameDocRef = doc(db, 'artifacts', appId, 'public', 'data', FIREBASE_COLLECTION_NAME, gameId);
+            
+            unsubscribeGameListener = onSnapshot(gameDocRef, (docSnapshot) => {
+                if (!docSnapshot.exists()) {
+                    handleGameEnd("Game session disconnected (Host deleted document).");
+                    return;
+                }
+
+                const data = docSnapshot.data();
+                renderGame(data);
+                
+            }, (error) => {
+                console.error("Firestore onSnapshot error:", error);
+                handleGameEnd(`Real-time connection failed: Missing or insufficient permissions.`);
+            });
+        }
+
+        function renderGame(data) {
+            if (!currentGameId) return; 
+
+            // isPlayer1 is now assumed to be correctly set by enterGameArea/hostGame/joinLobby.
+            
+            const p1ReadyEl = document.getElementById('p1-status');
+            const p2ReadyEl = document.getElementById('p2-status');
+            const readyBtn = document.getElementById('ready-btn');
+            const gameMessageEl = document.getElementById('game-message');
+            const startGameBtn = document.getElementById('start-game-btn');
+            
+            const p1NameEl = document.getElementById('p1-name');
+            const p2NameEl = document.getElementById('p2-name');
+
+            p1NameEl.textContent = data.p1Name || (data.p1Id ? data.p1Id.substring(0, 8) : '?');
+            p2NameEl.textContent = data.p2Name ? data.p2Name : (data.p2Id ? data.p2Id.substring(0, 8) : '?');
+
+            const isTwoPlayer = data.p2Id !== null;
+            const isBothReady = data.p1Ready && data.p2Ready;
+            const isGameStarted = data.status === 'playing';
+
+            // --- Ready Button Logic ---
+            readyBtn.style.display = isGameStarted ? 'none' : 'block';
+            readyBtn.disabled = !isTwoPlayer;
+            readyBtn.classList.toggle('btn-disabled', !isTwoPlayer);
+            
+            // If the user is currently ready, change the button text slightly
+            let userIsReady = isPlayer1 ? data.p1Ready : data.p2Ready;
+            readyBtn.textContent = userIsReady ? "Unready Status" : "Toggle Ready Status";
+
+
+            // --- Start Game Button Logic (Host Only) ---
+            if (isPlayer1) {
+                startGameBtn.style.display = 'block';
+                const canStart = isTwoPlayer && isBothReady && !isGameStarted;
+                startGameBtn.disabled = !canStart;
+                startGameBtn.classList.toggle('btn-disabled', !canStart);
+                startGameBtn.textContent = isGameStarted ? "Game In Progress" : "START GAME";
+            } else {
+                startGameBtn.style.display = 'none'; // Guests should never see the start button
+            }
+
+            // Update statuses
+            p1ReadyEl.textContent = data.p1Ready ? 'READY' : 'NO';
+            p1ReadyEl.className = `text-2xl font-bold ${data.p1Ready ? 'text-green-500' : 'text-red-500'}`;
+            
+            p2ReadyEl.textContent = data.p2Ready ? 'READY' : 'NO';
+            p2ReadyEl.className = `text-2xl font-bold ${data.p2Ready ? 'text-green-500' : 'text-red-500'}`;
+            
+            // Update game message
+            if (isGameStarted) {
+                gameMessageEl.textContent = 'GAME IS LIVE! Connect 4 logic goes here...';
+                gameMessageEl.className = 'text-xl font-semibold text-center text-green-600';
+            } else if (isTwoPlayer && isBothReady) {
+                 gameMessageEl.textContent = isPlayer1 ? 'READY TO START! Hit the button below.' : 'READY TO START! Waiting for Host...';
+                 gameMessageEl.className = 'text-xl font-semibold text-center text-blue-600';
+            } else if (isTwoPlayer) {
+                gameMessageEl.textContent = 'Both players connected. Waiting for ready check...';
+                gameMessageEl.className = 'text-xl font-semibold text-center';
+            } else {
+                gameMessageEl.textContent = 'Waiting for Player 2 to join...';
+                gameMessageEl.className = 'text-xl font-semibold text-center text-red-600';
+            }
+        }
+
+        async function enterGameArea(gameId) {
+            document.getElementById('current-game-id').textContent = gameId;
+            document.getElementById('player-label').textContent = 'Fetching Game Data...'; 
+            showScreen('game-area');
+            
+            // Explicitly fetch data to determine role immediately
+            const gameDocRef = doc(db, 'artifacts', appId, 'public', 'data', FIREBASE_COLLECTION_NAME, gameId);
+            try {
+                const docSnap = await getDoc(gameDocRef);
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    // Set the role based on the fetched data
+                    isPlayer1 = data.p1Id === currentUserId; 
+                    
+                    // Update the UI label immediately
+                    document.getElementById('player-label').textContent = isPlayer1 
+                        ? `Player 1 (Host: ${currentUserName})` 
+                        : `Player 2 (Guest: ${currentUserName})`;
+                }
+                
+            } catch (error) {
+                console.error("Error fetching role on enterGameArea:", error);
+            }
+        }
+        
+        function handleGameEnd(message) {
+            if (unsubscribeGameListener) {
+                unsubscribeGameListener();
+                unsubscribeGameListener = null;
+            }
+            updateStatus(message, 'bg-red-200 text-red-800');
+            currentGameId = null;
+            isPlayer1 = false;
+            showScreen('multiplayer-screen'); 
+        }
+
+    </script>
+</body>
+</html>
