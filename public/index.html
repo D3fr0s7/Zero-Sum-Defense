@@ -4,511 +4,102 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Zero-Sum Defense</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        /* Custom Font */
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700&family=Roboto:wght@400;700&display=swap');
-
-        body {
-            font-family: 'Roboto', sans-serif;
-            background-color: #0F172A; /* slate-900 */
-            color: #E2E8F0; /* slate-200 */
-            overscroll-behavior: none;
-        }
-
-        h1, h2, h3, .font-display {
-            font-family: 'Orbitron', sans-serif;
-            text-shadow: 0 0 8px rgba(59, 130, 246, 0.5); /* blue-500 */
-        }
-
-        /* Main container bg */
-        .main-container-bg {
-            background-color: rgba(3, 7, 18, 0.8); /* bg-gray-950 with opacity */
-            backdrop-filter: blur(10px);
-            border: 1px solid #1E293B; /* slate-800 */
-        }
-
-        /* Glassmorphic Modal */
-        .modal-glass {
-            background: rgba(30, 41, 59, 0.8); /* slate-800 */
-            backdrop-filter: blur(10px);
-            border: 1px solid #334155; /* slate-700 */
-        }
-
-        /* Game Board */
-        .game-grid {
-            display: grid;
-            grid-template-columns: repeat(10, minmax(0, 1fr));
-            grid-template-rows: repeat(8, minmax(0, 1fr));
-            border: 2px solid #334155; /* slate-700 */
-            gap: 1px;
-            background-color: #1E293B; /* slate-800 */
-            /* Aspect ratio for the board */
-            aspect-ratio: 10 / 8;
-            width: 100%;
-            max-width: 90vh; /* Max width relative to viewport height */
-            margin-left: auto;
-            margin-right: auto;
-        }
-
-        .grid-cell {
-            position: relative;
-            background-color: #0F172A; /* slate-900 */
-            transition: background-color 0.2s;
-            aspect-ratio: 1 / 1;
-        }
-
-        /* Shroud Wall - Opponent's Zone */
-        .shroud-wall {
-            background-color: rgba(15, 23, 42, 0.8); /* slate-900/80 */
-            position: relative;
-            overflow: hidden;
-        }
-        /* Static/noise effect for shroud */
-        .shroud-wall::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='100' height='100' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='none'/%3E%3Cpath d='M0 0 L100 100 M0 100 L100 0' stroke='%231E293B' stroke-width='1'/%3E%3C/svg%3E");
-            background-size: 10px 10px;
-            opacity: 0.2;
-            animation: static-noise 8s linear infinite;
-        }
-        
-        @keyframes static-noise {
-            0% { transform: translate(0, 0); }
-            10% { transform: translate(-5%, -5%); }
-            20% { transform: translate(-10%, 5%); }
-            30% { transform: translate(5%, -10%); }
-            40% { transform: translate(-5%, 15%); }
-            50% { transform: translate(-10%, 5%); }
-            60% { transform: translate(15%, 0); }
-            70% { transform: translate(0, 10%); }
-            80% { transform: translate(-15%, 0); }
-            90% { transform: translate(10%, 5%); }
-            100% { transform: translate(5%, 0); }
-        }
-
-        /* Cell highlighting */
-        .cell-valid {
-            background-color: rgba(34, 197, 94, 0.3); /* green-500/30 */
-            cursor: pointer;
-        }
-        .cell-invalid {
-            background-color: rgba(239, 68, 68, 0.3); /* red-500/30 */
-            cursor: not-allowed;
-        }
-        .cell-selected {
-            outline: 3px solid #FACC15; /* yellow-400 */
-            box-shadow: 0 0 15px #FACC15;
-            z-index: 10;
-        }
-        .cell-targetable {
-            cursor: crosshair;
-        }
-        .cell-targetable:hover {
-            background-color: rgba(239, 68, 68, 0.2); /* red-500/20 */
-        }
-        .attack-vector:hover {
-            background-color: rgba(249, 115, 22, 0.5) !important; /* orange-500/50 */
-            cursor: pointer;
-        }
-
-        /* Unit Styles */
-        .unit-svg {
-            width: 90%;
-            height: 90%;
-            margin: 5%;
-            filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.3));
-        }
-
-        /* Laser animation */
-        @keyframes laser-flash {
-            0%, 100% { 
-                background-color: var(--laser-color-1, rgba(255, 0, 0, 0.8)); 
-                box-shadow: 0 0 10px 5px var(--laser-color-1, rgba(255, 0, 0, 0.7)); 
-            }
-            50% { 
-                background-color: var(--laser-color-2, rgba(255, 100, 100, 0.8)); 
-                box-shadow: 0 0 15px 8px var(--laser-color-2, rgba(255, 100, 100, 0.7)); 
-            }
-        }
-        .laser-path {
-            animation: laser-flash 0.5s ease-out;
-            opacity: 1;
-            z-index: 50;
-        }
-
-        /* Scrollbar styling */
-        ::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #1E293B; /* slate-800 */
-            border-radius: 10px;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #334155; /* slate-700 */
-            border-radius: 10px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #475569; /* slate-600 */
-        }
-
-        /* Disabled Button Style */
-        button:disabled {
-            filter: grayscale(80%);
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-        
-    </style>
-</head>
-<body class="w-full min-h-screen overflow-hidden text-slate-200">
-    <!-- Main Application Container -->
-    <div id="app-container" class="w-full min-h-screen h-screen flex flex-col items-center justify-center p-2 md:p-4">
-
-        <!-- Error/Message Modal -->
-        <div id="modal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div class="modal-glass w-full max-w-md p-6 rounded-lg shadow-2xl text-center">
-                <p id="modal-message" class="text-lg mb-6"></p>
-                <button id="modal-close-btn" class="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-6 rounded-lg transition-all">OK</button>
-            </div>
-        </div>
-        
-        <!-- Loading Spinner -->
-        <div id="loading-spinner" class="hidden z-40 fixed inset-0 items-center justify-center bg-slate-900/50">
-            <div class="w-16 h-16 border-4 border-t-blue-500 border-gray-700 rounded-full animate-spin"></div>
-        </div>
-        
-        <!-- User Profile View -->
-        <div id="view-profile" class="main-container-bg w-full max-w-md p-6 rounded-lg shadow-2xl">
-            <h2 class="text-2xl font-display text-center mb-6">User Profile</h2>
-            <div class="space-y-4">
-                <div>
-                    <label for="user-name-input" class="block text-sm font-medium text-slate-400">Display Name</label>
-                    <input type="text" id="user-name-input" class="w-full p-2 bg-slate-800 border border-slate-700 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Enter your name">
-                </div>
-                <div>
-                    <label class="block text-sm font-medium text-slate-400">Preferred Color</label>
-                    <div id="color-selector" class="grid grid-cols-4 gap-2 mt-2">
-                        <!-- Colors will be injected here -->
-                    </div>
-                </div>
-                <button id="save-profile-btn" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg transition-all">Save & Continue</button>
-                <p class="text-xs text-center text-slate-500 mt-4">Your User ID: <span id="user-id-display" class="font-mono break-all"></span></p>
-            </div>
-        </div>
-
-        <!-- Main Menu View -->
-        <div id="view-main-menu" class="hidden main-container-bg w-full max-w-md p-6 rounded-lg shadow-2xl text-center">
-            <h1 class="text-4xl font-display mb-8">Zero-Sum Defense</h1>
-            <div class="space-y-4">
-                <button id="menu-singleplayer-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-lg transition-all" disabled>Single Player (Coming Soon)</button>
-                <button id="menu-multiplayer-btn" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-lg transition-all">Multiplayer</button>
-            </div>
-        </div>
-
-        <!-- Lobby List View -->
-        <div id="view-lobby-list" class="hidden main-container-bg w-full max-w-4xl h-full max-h-[80vh] p-6 rounded-lg shadow-2xl flex flex-col md:flex-row md:gap-6">
-            
-            <!-- Column 1: Lobbies -->
-            <div class="w-full md:w-2/3 flex flex-col h-full">
-                <h2 class="text-2xl font-display text-center mb-6">Open Lobbies</h2>
-                <div class="flex-shrink-0 flex gap-4 mb-4">
-                    <button id="lobby-create-btn" class="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-4 rounded-lg transition-all">Create New Lobby</button>
-                    <button id="lobby-refresh-btn" class="flex-shrink-0 bg-blue-600 hover:bg-blue-500 text-white font-bold p-3 rounded-lg transition-all" title="Refresh Lobbies">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-                        </svg>
-                    </button>
-                    <button id="lobby-back-btn" class="flex-shrink-0 bg-gray-600 hover:bg-gray-500 text-white font-bold p-3 rounded-lg transition-all" title="Back to Menu">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-                        </svg>
-                    </button>
-                </div>
-                <div id="lobby-list-container" class="flex-grow overflow-y-auto space-y-3 pr-2">
-                    <!-- Lobbies injected here -->
-                    <p id="no-lobbies-msg" class="text-slate-400 text-center py-4">No open lobbies found. Why not create one?</p>
-                </div>
-            </div>
-
-            <!-- NEW: Column 2: Players Online -->
-            <div class="w-full md:w-1/3 h-full flex flex-col mt-6 md:mt-0">
-                <h2 class="text-2xl font-display text-center mb-6">Players Online</h2>
-                <div id="player-list-container" class="main-container-bg flex-grow overflow-y-auto space-y-2 p-4 rounded-lg border border-slate-800">
-                    <p class="text-slate-400 text-sm text-center">Loading players...</p>
-                    <!-- Online players will be injected here -->
-                </div>
-            </div>
-
-        </div>
-        
-        <!-- Create Lobby View -->
-        <div id="view-create-lobby" class="hidden main-container-bg w-full max-w-lg p-6 rounded-lg shadow-2xl">
-            <h2 class="text-2xl font-display text-center mb-6">Create Lobby</h2>
-            <div class="space-y-4">
-                <div>
-                    <label for="lobby-name-input" class="block text-sm font-medium text-slate-400">Lobby Name</label>
-                    <input type="text" id="lobby-name-input" class="w-full p-2 bg-slate-800 border border-slate-700 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="e.g., Tactical Showdown">
-                </div>
-                <div>
-                    <label for="energy-pool-select" class="block text-sm font-medium text-slate-400">Initial Energy Pool</label>
-                    <select id="energy-pool-select" class="w-full p-2 bg-slate-800 border border-slate-700 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <option value="10">10 (Standard)</option>
-                        <option value="6">6 (Fast Game)</option>
-                        <option value="14">14 (Long Game)</option>
-                    </select>
-                </div>
-                <div class="flex gap-4">
-                    <button id="create-lobby-cancel-btn" class="w-1/2 bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-lg transition-all">Cancel</button>
-                    <button id="create-lobby-confirm-btn" class="w-1/2 bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-4 rounded-lg transition-all">Create</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Waiting Lobby View -->
-        <div id="view-waiting-lobby" class="hidden main-container-bg w-full max-w-lg p-6 rounded-lg shadow-2xl text-center">
-            <h2 id="wait-lobby-name" class="text-2xl font-display mb-4">Waiting for Opponent...</h2>
-            <div class="space-y-4">
-                <div id="player-slot-1" class="p-3 bg-slate-800 border border-slate-700 rounded-lg flex items-center justify-between">
-                    <span id="player-1-name"></span>
-                    <span id="player-1-color" class="w-6 h-6 rounded-full border-2 border-white"></span>
-                </div>
-                <div id="player-slot-2" class="p-3 bg-slate-800 border border-slate-700 rounded-lg flex items-center justify-center text-slate-500">
-                    <!-- Player 2 Info is dynamically added here -->
-                    <span id="player-2-name">Waiting for player...</span>
-                </div>
-            </div>
-            <p class="text-sm text-slate-400 mt-6">Share this Lobby ID:</p>
-            <p id="wait-lobby-id" class="font-mono text-lg bg-slate-800 p-2 rounded-md break-all"></p>
-            <button id="wait-lobby-cancel-btn" class="w-full mt-6 bg-red-600 hover:bg-red-500 text-white font-bold py-3 px-4 rounded-lg transition-all">Cancel Lobby</B>
-        </div>
-
-        <!-- Game View -->
-        <div id="view-game" class="hidden w-full h-full p-0 m-0">
-            <!-- Top Bar -->
-            <div class="w-full flex justify-between items-center p-2 bg-slate-900 border-b border-slate-800">
-                <h1 class="text-xl md:text-2xl font-display">Zero-Sum Defense</h1>
-                <div class="flex items-center gap-2 md:gap-4 text-xs md:text-sm">
-                    <div class="flex items-center gap-2">
-                        <span class="font-bold">Energy:</span>
-                        <span id="energy-pool-display" class="font-display text-lg text-cyan-400">10</span>
-                    </div>
-                    <div class="flex items-center gap-2">
-                        <span class="font-bold">Budget:</span>
-                        <span id="budget-display" class="font-display text-lg text-yellow-400">1</span>
-                    </div>
-                    <button id="quit-game-btn" class="bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-3 rounded-lg text-xs">Quit</button>
-                </div>
-            </div>
-            
-            <!-- Main Game Area -->
-            <div class="w-full h-[calc(100%-52px)] flex flex-col md:flex-row">
-                
-                <!-- Left Panel (Event Log & Phase) -->
-                <div class="w-full md:w-1/4 h-1/3 md:h-full flex flex-col p-2 gap-2">
-                    <div class="bg-slate-800/50 p-3 rounded-lg flex-grow flex flex-col">
-                        <h3 class="text-lg font-display mb-2 flex-shrink-0">Event Log</h3>
-                        <div id="event-log" class="text-sm space-y-1 overflow-y-auto flex-grow pr-1 text-slate-300">
-                            <!-- Log messages injected here -->
-                        </div>
-                    </div>
-                    <div class="bg-slate-800/50 p-3 rounded-lg flex-shrink-0">
-                        <h3 class="text-lg font-display mb-2">Current Phase</h3>
-                        <p id="phase-indicator" class="text-xl font-bold text-center text-yellow-400">SETUP</p>
-                        <button id="bottom-next-phase-btn" class="hidden w-full bg-green-600 hover:bg-green-500 text-white font-bold p-3 rounded-lg transition-all text-lg mt-3">
-                            Confirm Placement
-                        </button>
-                    </div>
-                </div>
-
-                <!-- Center Panel (Game Board) -->
-                <div class="w-full md:w-1/2 h-2/3 md:h-full flex items-center justify-center p-2">
-                    <div id="game-board" class="game-grid">
-                        <!-- Cells injected here -->
-                    </div>
-                </div>
-
-                <!-- Right Panel (Controls) -->
-                <div id="controls-panel" class="w-full md:w-1/4 h-1/3 md:h-full p-2">
-                    <div class="bg-slate-800/50 p-4 rounded-lg h-full flex flex-col">
-                        <!-- Player Info -->
-                        <div class="mb-4">
-                            <h3 class="text-lg font-display mb-2">Players</h3>
-                            <div class="space-y-2">
-                                <div id="player-0-info" class="p-2 rounded-lg border-2 border-transparent">
-                                    <div class="flex justify-between items-center">
-                                        <span id="player-0-name" class="font-bold text-lg"></span>
-                                        <span id="player-0-hp" class="font-display text-xl">HP: 3</span>
-                                    </div>
-                                </div>
-                                <div id="player-1-info" class="p-2 rounded-lg border-2 border-transparent">
-                                    <div class="flex justify-between items-center">
-                                        <span id="player-1-name" class="font-bold text-lg"></span>
-                                        <span id="player-1-hp" class="font-display text-xl">HP: 3</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Control Section (Dynamic) -->
-                        <div class="flex-grow">
-                            <h3 class="text-lg font-display mb-2">Controls</h3>
-                            
-                            <!-- Setup Controls -->
-                            <div id="setup-controls" class="space-y-3">
-                                <p class="text-slate-400 text-center">Place your Nexus in your zone (Columns 1-5 or 6-10).</p>
-                                <button id="confirm-nexus-btn" class="w-full bg-green-600 hover:bg-green-500 text-white font-bold p-3 rounded-lg transition-all" disabled>
-                                    Confirm Placement
-                                </button>
-                            </div>
-                            
-                            <!-- Buy/Move Controls -->
-                            <div id="buy-move-controls" class="hidden space-y-3">
-                                <button id="place-pylon-btn" class="w-full bg-blue-600 hover:bg-blue-500 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg transition-all">Place Pylon (Cost: 1)</button>
-                                <button id="place-mirror-btn" class="w-full bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg transition-all">Place Mirror (Cost: 1)</button>
-                                <button id="move-nexus-btn" class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg transition-all">Move Nexus</button>
-                                <button id="undo-action-btn" class="w-full bg-gray-600 hover:bg-gray-500 disabled:bg-gray-700 disabled:opacity-50 text-white font-bold p-2 rounded-lg transition-all text-sm">Undo Last Action</button>
-                                <hr class="border-gray-600 my-3">
-                                <button id="end-phase-btn" class="w-full bg-green-600 hover:bg-green-500 text-white font-bold p-3 rounded-lg transition-all text-lg">Ready to Attack</button>
-                            </div>
-
-                            <!-- Attack Controls -->
-                            <div id="attack-controls" class="hidden">
-                                <p class="text-slate-400 text-center mb-3">Select a direction to fire your laser. Or skip your attack.</p>
-                                <div class="grid grid-cols-3 gap-2 w-36 mx-auto">
-                                    <button class="attack-dir-btn aspect-square bg-slate-700 hover:bg-orange-500 rounded-lg" data-dir="[-1,-1]">↖</button>
-                                    <button class="attack-dir-btn aspect-square bg-slate-700 hover:bg-orange-500 rounded-lg" data-dir="[-1,0]">↑</button>
-                                    <button class="attack-dir-btn aspect-square bg-slate-700 hover:bg-orange-500 rounded-lg" data-dir="[-1,1]">↗</button>
-                                    <button class="attack-dir-btn aspect-square bg-slate-700 hover:bg-orange-500 rounded-lg" data-dir="[0,-1]">←</button>
-                                    <div class="aspect-square flex items-center justify-center">
-                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-8 h-8 text-red-500">
-                                            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                        </svg>
-                                    </div>
-                                    <button class="attack-dir-btn aspect-square bg-slate-700 hover:bg-orange-500 rounded-lg" data-dir="[0,1]">→</button>
-                                    <button class="attack-dir-btn aspect-square bg-slate-700 hover:bg-orange-500 rounded-lg" data-dir="[1,-1]">↙</button>
-                                    <button class="attack-dir-btn aspect-square bg-slate-700 hover:bg-orange-500 rounded-lg" data-dir="[1,0]">↓</button>
-                                    <button class="attack-dir-btn aspect-square bg-slate-700 hover:bg-orange-500 rounded-lg" data-dir="[1,1]">↘</button>
-                                </div>
-                                <button id="skip-attack-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold p-3 rounded-lg transition-all mt-4">Skip Attack & End Turn</button>
-                            </div>
-                            
-                            <!-- Waiting Controls -->
-                            <div id="waiting-controls" class="hidden">
-                                <p class="text-slate-400 text-center text-lg italic animate-pulse">Waiting for opponent...</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-            </div>
-        </div>
-    </div>
-
     <!-- Firebase SDK -->
     <script type="module">
-        // --- Custom Firebase Config ---
-        // This is the data you provided.
-        const CUSTOM_FIREBASE_CONFIG = {
-            apiKey: "AIzaSyBTK04oSfdM5K0w8sspYn42OQzCGFf8AMM",
-            authDomain: "zero-sum-defense.firebaseapp.com",
-            projectId: "zero-sum-defense",
-            storageBucket: "zero-sum-defense.firebasestorage.app",
-            messagingSenderId: "484724724929",
-            appId: "1:484724724929:web:104009b0c91ee8559a3040"
-        };
-
-        // Import Firebase services from CDN
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { 
-            getFirestore, 
-            doc, 
-            getDoc, 
-            setDoc, 
-            updateDoc, 
-            deleteDoc, 
-            onSnapshot, 
-            collection, 
-            query, 
-            where, 
-            getDocs,
-            serverTimestamp,
-            writeBatch,
-            runTransaction
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, addDoc, updateDoc, writeBatch, query, where, getDocs, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // --- CONSTANTS ---
+        const BOARD_ROWS = 8;
+        const BOARD_COLS = 10;
+        const NEXUS_HP = 3;
+        const BUILDING_HP = 1;
+        const PYLON_COST = 1;
+        const MIRROR_COST = 1;
+        const NEXUS_MOVE_RANGE = 3;
+        const INITIAL_ENERGY = 10;
+
+        const AVAILABLE_COLORS = ['Blue', 'Red', 'Green', 'Yellow', 'Purple', 'Orange', 'Pink', 'Cyan'];
+        const COLOR_MAP = {
+            'Blue':   { bg: 'bg-blue-900/20',   stroke: 'stroke-cyan-400',       border: 'border-cyan-400'   },
+            'Red':    { bg: 'bg-red-900/20',    stroke: 'stroke-rose-400',       border: 'border-rose-400'   },
+            'Green':  { bg: 'bg-green-900/20',  stroke: 'stroke-green-400',      border: 'border-green-400'  },
+            'Yellow': { bg: 'bg-yellow-900/20', stroke: 'stroke-yellow-400',     border: 'border-yellow-400' },
+            'Purple': { bg: 'bg-purple-900/20', stroke: 'stroke-purple-400',     border: 'border-purple-400' },
+            'Orange': { bg: 'bg-orange-900/20', stroke: 'stroke-orange-400',     border: 'border-orange-400' },
+            'Pink':   { bg: 'bg-pink-900/20',   stroke: 'stroke-pink-400',       border: 'border-pink-400'   },
+            'Cyan':   { bg: 'bg-cyan-900/20',   stroke: 'stroke-cyan-400',       border: 'border-cyan-400'   }
+        };
+
+        const DIRECTIONS = {
+            'N': [-1, 0], 'NE': [-1, 1], 'E': [0, 1], 'SE': [1, 1],
+            'S': [1, 0], 'SW': [1, -1], 'W': [0, -1], 'NW': [-1, -1]
+        };
 
         // --- DOM Elements ---
         const $ = (selector) => document.querySelector(selector);
         const $$ = (selector) => document.querySelectorAll(selector);
-        
+
         // Views
-        const viewProfile = $('#view-profile');
-        const viewMainMenu = $('#view-main-menu');
-        const viewLobbyList = $('#view-lobby-list');
-        const viewCreateLobby = $('#view-create-lobby');
-        const viewWaitingLobby = $('#view-waiting-lobby');
-        const viewGame = $('#view-game');
-        
-        // Modals & Loaders
-        const modal = $('#modal');
-        const modalMessage = $('#modal-message');
-        const modalCloseBtn = $('#modal-close-btn');
-        const loadingSpinner = $('#loading-spinner');
+        const profileView = $('#profile-view');
+        const lobbyView = $('#lobby-view');
+        const lobbyListView = $('#lobby-list-view');
+        const createLobbyView = $('#create-lobby-view');
+        const waitingRoomView = $('#waiting-room-view');
+        const gameView = $('#game-view');
+        const modalView = $('#modal-view');
 
-        // Profile View
-        const userNameInput = $('#user-name-input');
-        const colorSelector = $('#color-selector');
+        // Profile
+        const profileDisplayNameInput = $('#profile-display-name');
+        const profileColorSelect = $('#profile-color-select');
         const saveProfileBtn = $('#save-profile-btn');
-        const userIdDisplay = $('#user-id-display');
 
-        // Main Menu
-        const menuMultiplayerBtn = $('#menu-multiplayer-btn');
+        // Lobby
+        const userIdDisplay = $('#user-id-display');
+        const userDisplayNameDisplay = $('#user-display-name-display');
+        const singlePlayerBtn = $('#single-player-btn');
+        const multiPlayerBtn = $('#multi-player-btn');
 
         // Lobby List
         const lobbyListContainer = $('#lobby-list-container');
-        const noLobbiesMsg = $('#no-lobbies-msg');
-        const lobbyCreateBtn = $('#lobby-create-btn');
-        const lobbyRefreshBtn = $('#lobby-refresh-btn');
-        const lobbyBackBtn = $('#lobby-back-btn');
+        const refreshLobbiesBtn = $('#refresh-lobbies-btn');
+        const showCreateLobbyBtn = $('#show-create-lobby-btn');
+        const backToMainMenuBtn = $('#back-to-main-menu-btn');
 
         // Create Lobby
-        const createLobbyCancelBtn = $('#create-lobby-cancel-btn');
-        const createLobbyConfirmBtn = $('#create-lobby-confirm-btn');
         const lobbyNameInput = $('#lobby-name-input');
         const energyPoolSelect = $('#energy-pool-select');
+        const hostColorSelect = $('#host-color-select');
+        const createLobbyBtn = $('#create-lobby-btn');
+        const cancelCreateLobbyBtn = $('#cancel-create-lobby-btn');
 
-        // Waiting Lobby
-        const waitLobbyName = $('#wait-lobby-name');
-        const player1Name = $('#player-1-name');
-        const player1Color = $('#player-1-color');
-        // const player2Name = $('#player-2-name'); // Removed for safer selection
-        const waitLobbyId = $('#wait-lobby-id');
-        const waitLobbyCancelBtn = $('#wait-lobby-cancel-btn');
+        // Waiting Room
+        const waitingLobbyName = $('#waiting-lobby-name');
+        const waitingPlayer1Name = $('#waiting-player1-name');
+        const waitingPlayer1Color = $('#waiting-player1-color');
+        const waitingPlayer2Name = $('#waiting-player2-name');
+        const waitingPlayer2Color = $('#waiting-player2-color');
+        const startGameBtn = $('#start-game-btn');
+        const leaveLobbyBtn = $('#leave-lobby-btn');
 
-        // Game View
+        // Game
+        const gameIdDisplay = $('#game-id-display');
+        const playerNumberDisplay = $('#player-number');
+        const currentTurnDisplay = $('#current-turn');
+        const currentPhaseDisplay = $('#current-phase');
+        const energyPoolDisplay = $('#energy-pool');
+        const playerBudgetDisplay = $('#player-budget');
         const gameBoard = $('#game-board');
-        const eventLog = $('#event-log');
-        const energyPoolDisplay = $('#energy-pool-display');
-        const budgetDisplay = $('#budget-display');
-        const phaseIndicator = $('#phase-indicator');
-        const quitGameBtn = $('#quit-game-btn');
-        
-        // Player Info
-        const playerInfo = [$('#player-0-info'), $('#player-1-info')];
-        const playerName = [$('#player-0-name'), $('#player-1-name')];
-        const playerHp = [$('#player-0-hp'), $('#player-1-hp')];
+        const gameLog = $('#game-log');
+        const modalMessage = $('#modal-message');
+        const newGameBtn = $('#new-game-btn');
 
         // Controls
-        const controlsPanel = $('#controls-panel');
         const setupControls = $('#setup-controls');
+        const setupWaitingMsg = $('#setup-waiting-msg');
         const confirmNexusBtn = $('#confirm-nexus-btn');
         const buyMoveControls = $('#buy-move-controls');
         const attackControls = $('#attack-controls');
@@ -516,1251 +107,762 @@
         const placePylonBtn = $('#place-pylon-btn');
         const placeMirrorBtn = $('#place-mirror-btn');
         const moveNexusBtn = $('#move-nexus-btn');
-        const undoActionBtn = $('#undo-action-btn');
+        const cancelActionBtn = $('#cancel-action-btn');
         const endPhaseBtn = $('#end-phase-btn');
         const skipAttackBtn = $('#skip-attack-btn');
+
+        // New bottom indicator elements
+        const bottomPhaseDisplay = $('#bottom-phase-display');
         const bottomNextPhaseBtn = $('#bottom-next-phase-btn');
 
-        // --- Game Constants ---
-        const BOARD_ROWS = 8;
-        const BOARD_COLS = 10;
-        const NEXUS_HP = 3;
-        const PYLON_HP = 1;
-        const MIRROR_HP = 1;
-        const NEXUS_MOVE_RANGE = 3;
-        const PYLON_COST = 1;
-        const MIRROR_COST = 1;
-        const AVAILABLE_COLORS = ['Blue', 'Red', 'Green', 'Yellow', 'Purple', 'Orange', 'Pink', 'Cyan'];
-        const COLOR_MAP = {
-            'Blue':   { hex: '#3B82F6', bg: 'bg-blue-900/20',   stroke: 'stroke-cyan-400',      border: 'border-cyan-400',   laserColors: ['#22D3EE', '#A5F3FC'] },
-            'Red':    { hex: '#EF4444', bg: 'bg-red-900/20',    stroke: 'stroke-rose-400',      border: 'border-rose-400',   laserColors: ['#F43F5E', '#FDA4AF'] },
-            'Green':  { hex: '#22C55E', bg: 'bg-green-900/20',  stroke: 'stroke-green-400',     border: 'border-green-400',  laserColors: ['#4ADE80', '#BBF7D0'] },
-            'Yellow': { hex: '#EAB308', bg: 'bg-yellow-900/20', stroke: 'stroke-yellow-400',    border: 'border-yellow-400', laserColors: ['#FACC15', '#FEF08A'] },
-            'Purple': { hex: '#A855F7', bg: 'bg-purple-900/20', stroke: 'stroke-purple-400',    border: 'border-purple-400', laserColors: ['#A855F7', '#E9D5FF'] },
-            'Orange': { hex: '#F97316', bg: 'bg-orange-900/20', stroke: 'stroke-orange-400',    border: 'border-orange-400', laserColors: ['#F97316', '#FED7AA'] },
-            'Pink':   { hex: '#EC4899', bg: 'bg-pink-900/20',   stroke: 'stroke-pink-400',      border: 'border-pink-400',   laserColors: ['#EC4899', '#FBCFE8'] },
-            'Cyan':   { hex: '#06B6D4', bg: 'bg-cyan-900/20',   stroke: 'stroke-cyan-400',      border: 'border-cyan-400',   laserColors: ['#22D3EE', '#A5F3FC'] }
-        };
-
-        const DIRECTIONS = {
-            '[-1,-1]': 'Up-Left', '[-1,0]': 'Up', '[-1,1]': 'Up-Right',
-            '[0,-1]': 'Left', '[0,1]': 'Right',
-            '[1,-1]': 'Down-Left', '[1,0]': 'Down', '[1,1]': 'Down-Right',
-        };
-
-        // --- Firebase Globals ---
-        let app, auth, db;
+        // --- App State ---
+        let db, auth;
         let currentUserId = null;
-        let userProfile = { name: 'Player', color: 'Blue' };
-        let isOffline = false;
-
-        // --- Game State ---
+        let userProfile = null;
         let currentGameId = null;
         let currentGame = null;
-        let playerIndex = -1; // 0 or 1
+        let playerIndex = -1;
         let unsubscribeGame = null;
-        let unsubscribeLobbies = null;
-        let presenceHeartbeatInterval = null; // For "Online Players" list
-        let unsubscribePresence = null; // For "Online Players" list
         let currentAction = null; // 'place-pylon', 'place-mirror', 'move-nexus-select', 'setup-nexus-select'
         let selectedUnitLocation = null; // for nexus move or setup
         let currentBudget = 0;
-        let turnStateHistory = []; // For Undo
-        let oldGameForHistory = null; // To compare states
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
         // --- SVGs for Units ---
-        // (Using stroke-width 2 for better visibility)
-        const NEXUS_SVG = (colorClass) => `
-            <svg class="unit-svg ${colorClass}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M2 17L12 22L22 17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M2 7L12 12L22 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M12 12V22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M2 7V17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M22 7V17" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        const NEXUS_SVG = `
+            <svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path>
             </svg>`;
-        
-        const PYLON_SVG = (colorClass) => `
-            <svg class="unit-svg ${colorClass}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2L12 22M12 2L6 8M12 2L18 8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M12 15L8 19L16 19L12 15Z" fill="currentColor" opacity="0.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-                <path d="M12 22L8 19M12 22L16 19" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        const PYLON_SVG = `
+            <svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2L7 22h10L12 2z"></path>
             </svg>`;
-        
-        const MIRROR_SVG = (colorClass) => `
-            <svg class="unit-svg ${colorClass}" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M4 4L20 20" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
-                <path d="M6 4L20 18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
-                <path d="M4 6L18 20" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" opacity="0.6"/>
+        const MIRROR_SVG = `
+            <svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="2" y1="22" x2="22" y2="2"></line>
             </svg>`;
 
-
-        // --- Utility Functions ---
-
-        function showView(viewId) {
-            $$('[id^="view-"]').forEach(view => view.classList.add('hidden'));
-            $(viewId).classList.remove('hidden');
-        }
-
-        function showModal(message, isError = false) {
-            modalMessage.textContent = message;
-            modalMessage.classList.toggle('text-red-400', isError);
-            modal.classList.remove('hidden');
-        }
-
-        function showError(message) {
-            showModal(message, true);
-        }
-
-        function showLoading(show) {
-            loadingSpinner.classList.toggle('hidden', !show);
-            loadingSpinner.classList.toggle('flex', show);
-        }
-
-        function logEvent(message, isPublic = true) {
-            if (isPublic) {
-                // This will be handled by onSnapshot detecting a log change
-                const newLog = [...(currentGame.log || []), message];
-                const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', currentGameId);
-                updateDoc(gameRef, { log: newLog });
-            } else {
-                // For client-side only messages
-                const logEntry = document.createElement('p');
-                logEntry.textContent = `> ${message}`;
-                logEntry.classList.add('text-cyan-300'); // Different color for client log
-                eventLog.appendChild(logEntry);
-                eventLog.scrollTop = eventLog.scrollHeight;
-            }
-        }
-
-        function getUnitAt(r, c) {
-            if (!currentGame || !currentGame.players) return null;
-            for (const player of currentGame.players) {
-                if (player.nexusLocation && player.nexusLocation[0] === r && player.nexusLocation[1] === c) {
-                    return { type: 'nexus', ...player, hp: player.nexusHP };
-                }
-                const building = player.buildings.find(b => b.location[0] === r && b.location[1] === c);
-                if (building) {
-                    return { ...building, ownerId: player.userId };
-                }
-            }
-            return null;
-        }
-
-        function getPlayerById(userId) {
-            if (!currentGame) return null;
-            return currentGame.players.find(p => p.userId === userId);
-        }
-
-        function getPlayerIndexById(userId) {
-            if (!currentGame) return -1;
-            return currentGame.players.findIndex(p => p.userId === userId);
-        }
-
-        function cancelCurrentAction() {
-            currentAction = null;
-            selectedUnitLocation = null;
-            confirmNexusBtn.disabled = true;
-            renderBoard();
-        }
-
-        // --- Firebase Init & Auth ---
-        
+        // --- Firebase Initialization ---
         async function initFirebase() {
             try {
-                // Use custom config if provided
-                const firebaseConfig = (typeof CUSTOM_FIREBASE_CONFIG !== 'undefined') 
-                    ? CUSTOM_FIREBASE_CONFIG
-                    : JSON.parse(__firebase_config);
+                // const firebaseConfig = JSON.parse(__firebase_config); // Old config
+                const firebaseConfig = {
+                    apiKey: "AIzaSyBTK04oSfdM5K0w8sspYn42OQzCGFf8AMM",
+                    authDomain: "zero-sum-defense.firebaseapp.com",
+                    projectId: "zero-sum-defense",
+                    storageBucket: "zero-sum-defense.firebasestorage.app",
+                    messagingSenderId: "484724724929",
+                    appId: "1:484724724929:web:104009b0c91ee8559a3040"
+                };
                 
-                app = initializeApp(firebaseConfig);
+                const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
+                setLogLevel('debug'); // Enable Firestore logging
 
-                // Auth state listener
                 onAuthStateChanged(auth, async (user) => {
                     if (user) {
                         currentUserId = user.uid;
                         userIdDisplay.textContent = currentUserId;
                         await loadUserProfile();
-                        // If profile is complete, show main menu, else stay on profile
-                        if (userProfile.name !== 'Player' && userProfile.color) {
-                            showView('#view-main-menu');
-                        } else {
-                            showView('#view-profile');
-                        }
                     } else {
                         // No user, attempt to sign in
-                        try {
-                            if (typeof __initial_auth_token !== 'undefined') {
-                                await signInWithCustomToken(auth, __initial_auth_token);
-                            } else {
-                                await signInAnonymously(auth);
-                            }
-                        } catch (authError) {
-                            console.error("Auth Error:", authError);
-                            showError("Could not authenticate with server. Please refresh.");
-                        }
+                        signIn();
                     }
-                    showLoading(false);
                 });
-
             } catch (error) {
                 console.error("Firebase Init Error:", error);
-                showError("Fatal Error: Could not initialize application. Check console.");
-                showLoading(false);
+                showModal(`Error: Could not initialize. Details: ${error.message}`);
             }
         }
 
-        // --- User Profile ---
-
-        function renderColorSelector() {
-            colorSelector.innerHTML = '';
-            AVAILABLE_COLORS.forEach(color => {
-                const colorEl = document.createElement('button');
-                colorEl.dataset.color = color;
-                colorEl.style.backgroundColor = COLOR_MAP[color].hex;
-                colorEl.classList.add('w-full', 'h-12', 'rounded-lg', 'border-4', 'border-transparent', 'transition-all');
-                if (color === userProfile.color) {
-                    colorEl.classList.add('border-white', 'ring-2', 'ring-white');
+        async function signIn() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
                 }
-                colorEl.addEventListener('click', () => {
-                    userProfile.color = color;
-                    renderColorSelector();
-                });
-                colorSelector.appendChild(colorEl);
-            });
-        }
-
-        function updateMenuButtons() {
-            // Disable multiplayer if offline
-            if (isOffline) {
-                menuMultiplayerBtn.disabled = true;
-                menuMultiplayerBtn.textContent = "Multiplayer (Offline)";
-            } else {
-                menuMultiplayerBtn.disabled = false;
-                menuMultiplayerBtn.textContent = "Multiplayer";
+            } catch (error) {
+                console.error("Firebase Sign-In Error:", error);
+                showModal(`Error: Could not sign in. Details: ${error.message}`);
             }
-
-            // Single player is always disabled for now
-            // (You can change this logic later when you implement it) <---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-            // menuSingleplayerBtn.disabled = false; 
         }
 
+        // --- Profile Functions ---
         async function loadUserProfile() {
-            const userRef = doc(db, 'artifacts', appId, 'users', currentUserId, 'profile', 'data');
-            const docSnap = await getDoc(userRef);
-            if (docSnap.exists()) {
-                userProfile = docSnap.data();
-            } else {
-                // Create a default profile if one doesn't exist
-                userProfile = { name: 'Player', color: 'Blue' };
-                await setDoc(userRef, userProfile);
+            if (!currentUserId) return;
+            const profileRef = doc(db, 'artifacts', appId, 'users', currentUserId, 'profile', 'settings');
+            try {
+                const docSnap = await getDoc(profileRef);
+                if (docSnap.exists()) {
+                    userProfile = docSnap.data();
+                    userDisplayNameDisplay.textContent = userProfile.displayName;
+                    showView('lobby');
+                } else {
+                    // First time user, show profile creation
+                    populateColorSelect(profileColorSelect);
+                    showView('profile');
+                }
+            } catch (error) {
+                console.error("Load Profile Error:", error);
+                showModal("Error loading user profile.");
             }
-            userNameInput.value = userProfile.name;
-            renderColorSelector();
         }
 
         async function saveUserProfile() {
-            const newName = userNameInput.value.trim();
-            if (!newName) {
-                return showError("Please enter a display name.");
+            const displayName = profileDisplayNameInput.value.trim();
+            const preferredColor = profileColorSelect.value;
+            if (displayName.length < 3) {
+                return showError("Display name must be at least 3 characters.");
             }
-            if (newName.length > 20) {
-                return showError("Name must be 20 characters or less.");
-            }
-            userProfile.name = newName;
-            // userProfile.color is already set by renderColorSelector
-            
-            showLoading(true);
+
+            const profileData = { displayName, preferredColor };
+            const profileRef = doc(db, 'artifacts', appId, 'users', currentUserId, 'profile', 'settings');
             try {
-                const userRef = doc(db, 'artifacts', appId, 'users', currentUserId, 'profile', 'data');
-                await setDoc(userRef, userProfile);
-                showView('#view-main-menu');
+                await setDoc(profileRef, profileData);
+                userProfile = profileData;
+                userDisplayNameDisplay.textContent = userProfile.displayName;
+                showView('lobby');
             } catch (error) {
-                console.error("Profile Save Error:", error);
+                console.error("Save Profile Error:", error);
                 showError("Could not save profile.");
             }
-            showLoading(false);
         }
 
-        // --- Lobby Management ---
+        // --- Lobby Functions ---
 
-        async function listenForLobbies() {
-            const lobbiesRef = collection(db, 'artifacts', appId, 'public', 'data', 'zero_sum_lobbies');
-            const q = query(lobbiesRef, where('status', '==', 'waiting'));
+        function showLobbyList() {
+            showView('lobbyList');
+            refreshLobbies();
+        }
 
-            if (unsubscribeLobbies) unsubscribeLobbies(); // Unsubscribe from old listener
-
-            unsubscribeLobbies = onSnapshot(q, (querySnapshot) => {
-                lobbyListContainer.innerHTML = ''; // Clear list
+        async function refreshLobbies() {
+            if (!db) return;
+            lobbyListContainer.innerHTML = '<p class="text-gray-400">Loading open lobbies...</p>';
+            const gamesRef = collection(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games');
+            const q = query(gamesRef, where("status", "==", "waitingForOpponent"));
+            
+            try {
+                const querySnapshot = await getDocs(q);
                 if (querySnapshot.empty) {
-                    noLobbiesMsg.classList.remove('hidden');
-                } else {
-                    noLobbiesMsg.classList.add('hidden');
-                    querySnapshot.forEach((doc) => {
-                        const lobby = doc.data();
-                        const lobbyEl = document.createElement('div');
-                        lobbyEl.className = 'p-4 bg-slate-800 border border-slate-700 rounded-lg flex justify-between items-center';
-                        
-                        // Player 1 (Host) Info
-                        const host = lobby.players[0];
-                        const hostColorHex = COLOR_MAP[host.color]?.hex || '#FFFFFF';
-                        
-                        lobbyEl.innerHTML = `
-                            <div>
-                                <h4 class="text-lg font-bold">${lobby.lobbyName}</h4>
-                                <p class="text-sm text-slate-400">Host: ${host.name}</p>
-                            </div>
-                            <div class="flex items-center gap-4">
-                                <div class="flex items-center gap-2">
-                                    <span style="background-color: ${hostColorHex}" class="w-5 h-5 rounded-full border-2 border-white"></span>
-                                    <span class="text-sm">(1/2)</span>
-                                </div>
-                                <button data-id="${doc.id}" class="join-lobby-btn bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded-lg transition-all">Join</button>
-                            </div>
-                        `;
-                        lobbyListContainer.appendChild(lobbyEl);
-                    });
+                    lobbyListContainer.innerHTML = '<p class="text-gray-400">No open lobbies found. Create one!</p>';
+                    return;
                 }
-            }, (error) => {
-                console.error("Lobby Listen Error:", error);
-                showError("Could not fetch lobbies.");
-            });
+                
+                lobbyListContainer.innerHTML = ''; // Clear
+                querySnapshot.forEach((doc) => {
+                    const game = doc.data();
+                    const host = game.players[0];
+                    const el = document.createElement('div');
+                    el.className = 'flex justify-between items-center p-3 bg-gray-700/50 rounded-lg border border-indigo-500/30';
+                    el.innerHTML = `
+                        <div>
+                            <p class="text-lg font-bold text-cyan-400">${game.lobbyName}</p>
+                            <p class="text-sm text-gray-300">Host: ${host.displayName} (${host.color})</p>
+                            <p class="text-sm text-gray-400">Energy: ${game.maxEnergy}</p>
+                        </div>
+                        <button data-id="${doc.id}" class="join-lobby-btn bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded-lg transition-all">Join</button>
+                    `;
+                    lobbyListContainer.appendChild(el);
+                });
+
+                // Add event listeners to join buttons
+                $$('.join-lobby-btn').forEach(btn => {
+                    btn.addEventListener('click', () => joinLobby(btn.dataset.id));
+                });
+
+            } catch (error) {
+                console.error("Error refreshing lobbies:", error);
+                lobbyListContainer.innerHTML = '<p class="text-red-400">Error loading lobbies.</p>';
+            }
+        }
+
+        function showCreateLobby() {
+            populateColorSelect(hostColorSelect, userProfile.preferredColor);
+            energyPoolSelect.value = "10";
+            lobbyNameInput.value = `${userProfile.displayName}'s Game`;
+            showView('createLobby');
         }
 
         async function createLobby() {
+            if (!currentUserId || !userProfile) return;
+
             const lobbyName = lobbyNameInput.value.trim();
-            if (!lobbyName) {
-                return showError("Please enter a lobby name.");
-            }
-            
-            stopPresenceSystem(); // Stop presence when creating a game
-            showLoading(true);
-            const newLobbyId = `lobby-${Date.now()}`;
-            const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_lobbies', newLobbyId);
-            
-            const newLobby = {
+            if (!lobbyName) return showError("Lobby name is required.");
+
+            const hostColor = hostColorSelect.value;
+            const maxEnergy = parseInt(energyPoolSelect.value);
+
+            const gameData = {
                 lobbyName: lobbyName,
-                initialEnergy: parseInt(energyPoolSelect.value, 10),
-                status: 'waiting', // 'waiting', 'full', 'in-game'
-                createdAt: serverTimestamp(),
+                status: 'waitingForOpponent', // Host waits for P2
                 players: [
                     {
                         userId: currentUserId,
-                        name: userProfile.name,
-                        color: userProfile.color
+                        displayName: userProfile.displayName,
+                        color: hostColor,
+                        nexusLocation: null,
+                        nexusHP: NEXUS_HP,
+                        buildings: []
                     }
-                ]
+                ],
+                maxEnergy: maxEnergy,
+                energyPool: maxEnergy,
+                pendingEnergyRefund: 0,
+                turn: 0, // Host (P1) always starts
+                phase: 'setup', 
+                lastShotVector: null,
+                log: [`Lobby '${lobbyName}' created by ${userProfile.displayName}.`]
             };
 
             try {
-                await setDoc(lobbyRef, newLobby);
-                currentGameId = newLobbyId;
-                showView('#view-waiting-lobby');
-                listenForGameStart(newLobbyId); // This will listen for player 2 joining
-                updateWaitingLobbyUI(newLobby);
+                const collRef = collection(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games');
+                const gameDocRef = await addDoc(collRef, gameData);
+                listenToGame(gameDocRef.id); // Host starts listening
             } catch (error) {
                 console.error("Create Lobby Error:", error);
                 showError("Could not create lobby.");
             }
-            showLoading(false);
         }
 
-        async function joinLobby(lobbyId) {
-            stopPresenceSystem(); // Stop presence when joining a game
-            showLoading(true);
-            const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_lobbies', lobbyId);
-            
+        async function joinLobby(gameId) {
+            if (!gameId || !currentUserId || !userProfile) return;
+
+            const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', gameId);
+
             try {
-                // Use a transaction to safely join
-                await runTransaction(db, async (transaction) => {
-                    const lobbyDoc = await transaction.get(lobbyRef);
-                    if (!lobbyDoc.exists()) {
-                        throw new Error("Lobby not found.");
-                    }
-                    
-                    const lobby = lobbyDoc.data();
-                    if (lobby.status !== 'waiting' || lobby.players.length >= 2) {
-                        throw new Error("Lobby is full or has already started.");
-                    }
+                const gameSnap = await getDoc(gameRef);
+                if (!gameSnap.exists()) {
+                    return showError("Game not found.");
+                }
 
-                    // Assign color for player 2
-                    let player2Color = userProfile.color;
-                    if (player2Color === lobby.players[0].color) {
-                        // Find a different color
-                        player2Color = AVAILABLE_COLORS.find(c => c !== lobby.players[0].color) || 'Red';
-                    }
-                    
-                    const player2 = {
-                        userId: currentUserId,
-                        name: userProfile.name,
-                        color: player2Color
-                    };
+                const gameData = gameSnap.data();
+                const host = gameData.players[0];
 
-                    // Create the full game state
-                    const newGame = initializeGameState(lobby.initialEnergy, lobby.players[0], player2);
-                    
-                    // Create the game document
-                    const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', lobbyId);
-                    transaction.set(gameRef, newGame);
+                if (gameData.status !== 'waitingForOpponent') {
+                    return showError("Lobby is no longer open.");
+                }
+                if (host.userId === currentUserId) {
+                    // This is the host rejoining, just listen
+                    listenToGame(gameId);
+                    return;
+                }
 
-                    // Update the lobby to 'in-game'
-                    transaction.update(lobbyRef, {
-                        status: 'in-game',
-                        players: [lobby.players[0], player2]
-                    });
+                // Determine P2 color
+                let playerColor = userProfile.preferredColor;
+                if (host.color === playerColor) {
+                    playerColor = AVAILABLE_COLORS.find(c => c !== host.color) || 'Red'; // Get first available
+                }
+                
+                const p2Data = {
+                    userId: currentUserId,
+                    displayName: userProfile.displayName,
+                    color: playerColor,
+                    nexusLocation: null,
+                    nexusHP: NEXUS_HP,
+                    buildings: []
+                };
+                
+                await updateDoc(gameRef, {
+                    players: [host, p2Data], // Now full
+                    status: 'waitingForHostStart', // Waiting for host to click "Start"
+                    log: [...gameData.log, `${userProfile.displayName} joined as Player 2.`]
                 });
-                
-                // If transaction is successful
-                currentGameId = lobbyId;
-                listenForGameUpdates(lobbyId); // This will transition to game view
-                
+
+                listenToGame(gameId); // P2 starts listening
+
             } catch (error) {
                 console.error("Join Lobby Error:", error);
-                showError(error.message || "Could not join lobby.");
-            }
-            showLoading(false);
-        }
-        
-        // This is for the HOST
-        function listenForGameStart(lobbyId) {
-            const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', lobbyId);
-            
-            if (unsubscribeGame) unsubscribeGame(); // Stop any old listener
-
-            unsubscribeGame = onSnapshot(gameRef, (doc) => {
-                if (doc.exists()) {
-                    // Game document has been created by Player 2!
-                    // Stop listening for lobbies
-                    if (unsubscribeLobbies) {
-                        unsubscribeLobbies();
-                        unsubscribeLobbies = null;
-                    }
-                    // Start listening for game updates
-                    listenForGameUpdates(lobbyId);
-                }
-            });
-
-            // Also listen to the lobby doc for P2 info
-            const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_lobbies', lobbyId);
-            const unsubLobby = onSnapshot(lobbyRef, (doc) => {
-                if (doc.exists()) {
-                    updateWaitingLobbyUI(doc.data());
-                } else {
-                    // Lobby was deleted (maybe by host)
-                    unsubLobby();
-                    if (unsubscribeGame) unsubscribeGame();
-                    showView('#view-lobby-list');
-                    listenForLobbies();
-                }
-            });
-        }
-        
-        async function cancelLobby(lobbyId) {
-            showLoading(true);
-            try {
-                // Delete lobby and game doc (if it exists)
-                const batch = writeBatch(db);
-                const lobbyRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_lobbies', lobbyId);
-                const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', lobbyId);
-                
-                batch.delete(lobbyRef);
-                batch.delete(gameRef); // Delete game doc just in case
-                
-                await batch.commit();
-                
-                if (unsubscribeGame) {
-                    unsubscribeGame();
-                    unsubscribeGame = null;
-                }
-                
-                showView('#view-lobby-list');
-                listenForLobbies();
-                startPresenceSystem(); // Re-start presence when returning to lobby list
-
-            } catch (error) {
-                console.error("Cancel Lobby Error:", error);
-                showError("Could not cancel lobby.");
-            }
-            showLoading(false);
-        }
-
-        // --- FIX for Player 2 Name in Lobby ---
-        function updateWaitingLobbyUI(lobbyData) {
-            waitLobbyName.textContent = lobbyData.lobbyName;
-            waitLobbyId.textContent = currentGameId;
-            
-            const host = lobbyData.players[0];
-            player1Name.textContent = `${host.name} (Host)`;
-            player1Color.style.backgroundColor = COLOR_MAP[host.color].hex;
-
-            const slot2 = $('#player-slot-2');
-            if (lobbyData.players.length > 1) {
-                const guest = lobbyData.players[1];
-                
-                // Clear the "Waiting for player..." text
-                slot2.innerHTML = ''; 
-                slot2.classList.remove('justify-center', 'text-slate-500');
-                slot2.classList.add('justify-between', 'items-center'); // Add classes for alignment
-
-                // Create and add the name span
-                const nameSpan = document.createElement('span');
-                nameSpan.id = 'player-2-name'; // Keep the ID just in case
-                nameSpan.textContent = guest.name;
-                slot2.appendChild(nameSpan);
-
-                // Create and add the color span
-                const player2ColorEl = document.createElement('span');
-                player2ColorEl.className = 'w-6 h-6 rounded-full border-2 border-white';
-                player2ColorEl.style.backgroundColor = COLOR_MAP[guest.color].hex;
-                slot2.appendChild(player2ColorEl);
-                
-            } else {
-                // Restore waiting text if player 2 leaves (not implemented, but good practice)
-                slot2.innerHTML = '<span id="player-2-name">Waiting for player...</span>';
-                slot2.classList.add('justify-center', 'text-slate-500');
-                slot2.classList.remove('justify-between', 'items-center');
+                showError("Could not join lobby.");
             }
         }
 
-        // --- NEW --- Presence System Functions ---
+        async function leaveLobby() {
+            if (!currentGameId || !currentGame || playerIndex === -1) return;
 
-        /**
-         * Starts a heartbeat interval to write a timestamp to a presence doc.
-         * Also starts the listener for other online players.
-         */
-        async function startPresenceSystem() {
-            // Clear any old intervals/listeners
-            if (presenceHeartbeatInterval) clearInterval(presenceHeartbeatInterval);
-            if (unsubscribePresence) unsubscribePresence();
-
-            const updateHeartbeat = async () => {
-                try {
-                    // This doc path is unique per user
-                    const presRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_presence', currentUserId);
-                    await setDoc(presRef, { 
-                        name: userProfile.name, 
-                        color: userProfile.color, 
-                        lastHeartbeat: serverTimestamp() // Firestore's special timestamp
-                    });
-                } catch (error) {
-                    console.error("Presence heartbeat failed:", error);
-                    // Stop trying if it fails (e.g., permissions)
-                    if (presenceHeartbeatInterval) clearInterval(presenceHeartbeatInterval);
-                }
-            };
-            
-            await updateHeartbeat(); // Run once immediately to show user is online
-            presenceHeartbeatInterval = setInterval(updateHeartbeat, 30000); // Heartbeat every 30 seconds
-
-            listenForOnlinePlayers();
+            // Simple "back" button if game hasn't started
+            if (currentGame.status === 'waitingForOpponent' || currentGame.status === 'waitingForHostStart') {
+                 if (unsubscribeGame) unsubscribeGame();
+                 unsubscribeGame = null;
+                 currentGameId = null;
+                 currentGame = null;
+                 playerIndex = -1;
+                 showView('lobbyList'); // Go back to lobby list
+                 refreshLobbies();
+                 // TODO: If host leaves, delete lobby? If P2 leaves, update players array?
+                 // For now, simple exit.
+            }
         }
 
-        /**
-         * Listens to the presence collection and displays users
-         * whose heartbeats are very recent (e.g., within 60s).
-         */
-        function listenForOnlinePlayers() {
-            if (unsubscribePresence) unsubscribePresence(); // Unsubscribe from old listener
+        async function startGame() {
+            if (!currentGameId || currentGame.status !== 'waitingForHostStart' || playerIndex !== 0) return;
 
-            const presRef = collection(db, 'artifacts', appId, 'public', 'data', 'zero_sum_presence');
-            
-            unsubscribePresence = onSnapshot(presRef, (querySnapshot) => {
-                const playerListEl = $('#player-list-container');
-                if (!playerListEl) return; // In case we're not on the lobby view
-
-                playerListEl.innerHTML = ''; // Clear list
-                const now = Date.now();
-                let onlinePlayers = 0;
-
-                querySnapshot.forEach((doc) => {
-                    const player = doc.data();
-                    
-                    // Check if heartbeat exists and is within the last 60 seconds
-                    if (player.lastHeartbeat && (now - player.lastHeartbeat.toDate().getTime()) < 60000) {
-                        // Don't show yourself in the list
-                        if (doc.id === currentUserId) return; 
-                        
-                        onlinePlayers++;
-                        const playerEl = document.createElement('div');
-                        playerEl.className = 'p-2 bg-slate-800 border border-slate-700 rounded-lg flex items-center gap-3';
-                        
-                        const colorHex = COLOR_MAP[player.color]?.hex || '#FFFFFF';
-                        
-                        playerEl.innerHTML = `
-                            <span style="background-color: ${colorHex}" class="w-5 h-5 rounded-full border-2 border-white flex-shrink-0"></span>
-                            <span class="font-bold truncate">${player.name}</span>
-                        `;
-                        playerListEl.appendChild(playerEl);
-                    }
+             const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', currentGameId);
+             try {
+                await updateDoc(gameRef, {
+                    status: 'inProgress',
+                    phase: 'setup',
+                    turn: 0,
+                    log: [...currentGame.log, `Host started the game! Both players, place your Nexus.`]
                 });
-
-                if (onlinePlayers === 0) {
-                    playerListEl.innerHTML = '<p class="text-slate-400 text-sm text-center">No other players online.</p>';
-                }
-            }, (error) => {
-                console.error("Presence Listen Error:", error);
-                const playerListEl = $('#player-list-container');
-                if (playerListEl) {
-                    playerListEl.innerHTML = '<p class="text-red-400 text-sm text-center">Error loading players.</p>';
-                }
-            });
+                // listener will pick this up and renderGame() will show the board
+             } catch (error) {
+                 console.error("Start Game Error:", error);
+                 showError("Could not start game.");
+             }
         }
 
-        /**
-         * Clears intervals and listeners and deletes the presence doc
-         * when the user cleanly leaves the lobby.
-         */
-        async function stopPresenceSystem() {
-            if (presenceHeartbeatInterval) clearInterval(presenceHeartbeatInterval);
-            if (unsubscribePresence) unsubscribePresence();
-            
-            presenceHeartbeatInterval = null;
-            unsubscribePresence = null;
+        // --- Game Listener ---
+        function listenToGame(gameId) {
+            currentGameId = gameId;
+            gameIdDisplay.textContent = gameId;
 
-            try {
-                // Delete our presence doc so we instantly appear "offline"
-                const presRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_presence', currentUserId);
-                await deleteDoc(presRef);
-            } catch (error) {
-                console.error("Failed to delete presence doc:", error);
-                // Don't show modal, just log it. The heartbeat will time out anyway.
+            if (unsubscribeGame) {
+                unsubscribeGame();
             }
-        }
-
-
-        // --- Game State Initialization ---
-
-        function initializeGameState(initialEnergy, p1, p2) {
-            return {
-                players: [
-                    { 
-                        userId: p1.userId,
-                        name: p1.name,
-                        color: p1.color,
-                        nexusLocation: null, // [r, c]
-                        nexusHP: NEXUS_HP,
-                        buildings: [], // { type: 'pylon'|'mirror', location: [r,c], hp: 1 }
-                        hasConfirmedNexus: false
-                    },
-                    { 
-                        userId: p2.userId,
-                        name: p2.name,
-                        color: p2.color,
-                        nexusLocation: null, 
-                        nexusHP: NEXUS_HP,
-                        buildings: [],
-                        hasConfirmedNexus: false
-                    }
-                ],
-                initialEnergy: initialEnergy,
-                energyPool: initialEnergy,
-                turn: 0, // Player 0 starts
-                phase: 'setup', // 'setup', 'buyMove', 'attack', 'gameOver'
-                lastShotVector: null, // [dr, dc]
-                lastLaserPath: [], // For animation
-                lastAttackerIndex: null, // For animation color
-                log: [`Game started! ${p1.name} vs ${p2.name}.`],
-                pendingRefunds: { 0: 0, 1: 0 }, // Refunds to apply next turn
-                status: 'inProgress' // 'waitingForOpponent', 'inProgress', 'gameOver'
-            };
-        }
-
-
-        // --- Game Logic ---
-        
-        function listenForGameUpdates(gameId) {
-            if (unsubscribeGame) unsubscribeGame(); // Stop previous listener
 
             const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', gameId);
             unsubscribeGame = onSnapshot(gameRef, (doc) => {
                 if (!doc.exists()) {
-                    if (currentGame && currentGame.status !== 'gameOver') {
-                        showModal("Game data not found or deleted. Returning to lobby.", true);
-                    }
-                    quitGame(); // Go back to lobby list
+                    showModal("Error: Game data not found or deleted.", true);
                     return;
                 }
-
-                // Check for laser animation
-                const oldPath = oldGameForHistory?.lastLaserPath;
-                const newGame = doc.data();
-                const newPath = newGame.lastLaserPath;
-
-                if (newPath && newPath.length > 0 && JSON.stringify(newPath) !== JSON.stringify(oldPath)) {
-                    // A new laser path was just written, animate it for everyone.
-                    animateLaser(newPath, newGame.lastAttackerIndex);
-                }
-
-                oldGameForHistory = JSON.parse(JSON.stringify(currentGame)); // Store old state
-                currentGame = newGame;
+                currentGame = doc.data();
                 playerIndex = currentGame.players.findIndex(p => p.userId === currentUserId);
+
+                if (playerIndex === -1 && currentGame.status === 'inProgress') {
+                    // User is a spectator (or joined late)
+                    showError("You are not a player in this game. Spectator mode active.");
+                    // TODO: Implement spectator mode properly
+                }
                 
-                if (playerIndex === -1) {
-                    showError("Error: You are not part of this game. Spectator mode not yet supported.");
-                    quitGame();
-                    return;
-                }
-
-                if (currentGame.status === 'inProgress') {
-                    showView('#view-game');
-                    updateGameUI();
-                    renderBoard();
-                } else if (currentGame.status === 'gameOver') {
-                    showView('#view-game'); // Stay on game view to show final state
-                    updateGameUI();
-                    renderBoard();
-                    const winner = currentGame.players.find(p => p.nexusHP > 0);
-                    const winnerName = winner ? winner.name : "No one";
-                    showModal(`Game Over. ${winnerName} wins!`, false);
-                }
-
-                // --- Handle Undo History ---
-                const isMyTurn = currentGame.turn === playerIndex;
-                if (isMyTurn && currentGame.phase === 'buyMove') {
-                    // Check if it's a new turn or history is empty
-                    if (turnStateHistory.length === 0 || (oldGameForHistory && currentGame.turn !== oldGameForHistory.turn)) {
-                        turnStateHistory = [JSON.parse(JSON.stringify(currentGame))]; // Start history
-                    } 
-                    // Check if the state changed *and* it wasn't an undo
-                    else if (JSON.stringify(currentGame) !== JSON.stringify(oldGameForHistory) && turnStateHistory.length > 0) {
-                        // If the new state isn't already the last one in history (prevents double-push)
-                        if (JSON.stringify(currentGame) !== JSON.stringify(turnStateHistory[turnStateHistory.length - 1])) {
-                             turnStateHistory.push(JSON.parse(JSON.stringify(currentGame)));
-                            if (turnStateHistory.length > 4) { // 1 base + 3 actions
-                                turnStateHistory.shift();
-                            }
-                        }
-                    }
-                } else {
-                    turnStateHistory = []; // Not my turn or not buy phase, clear history
+                // Route to the correct view based on game status
+                switch (currentGame.status) {
+                    case 'waitingForOpponent':
+                    case 'waitingForHostStart':
+                        renderWaitingRoom();
+                        showView('waitingRoom');
+                        break;
+                    case 'inProgress':
+                        renderGame();
+                        showView('game');
+                        break;
+                    case 'gameOver':
+                        renderGame(); // Show final board state
+                        const winner = currentGame.players[currentGame.winner];
+                        const winnerName = (winner.userId === currentUserId) ? "You" : winner.displayName;
+                        showModal(`Game Over. ${winnerName} wins!`, true);
+                        break;
                 }
             });
         }
-        
-        async function quitGame() {
-            if (unsubscribeGame) {
-                unsubscribeGame();
-                unsubscribeGame = null;
-            }
-            if (unsubscribeLobbies) {
-                unsubscribeLobbies();
-                unsubscribeLobbies = null;
-            }
+
+        // --- Render Functions ---
+        function renderWaitingRoom() {
+            if (!currentGame) return;
+
+            const p1 = currentGame.players[0];
+            const p2 = currentGame.players.length > 1 ? currentGame.players[1] : null;
+
+            waitingLobbyName.textContent = currentGame.lobbyName;
             
-            // If game is in progress, one player quitting means game over
-            if (currentGame && currentGame.status === 'inProgress' && currentGameId) {
-                const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', currentGameId);
-                const opponent = currentGame.players[(playerIndex + 1) % 2];
-                opponent.nexusHP = NEXUS_HP; // Ensure opponent is winner
-                const myPlayer = currentGame.players[playerIndex];
-                myPlayer.nexusHP = 0;
-                
-                await updateDoc(gameRef, {
-                    status: 'gameOver',
-                    log: [...currentGame.log, `${myPlayer.name} has forfeited the game.`],
-                    players: currentGame.players
-                });
+            // Player 1 (Host)
+            waitingPlayer1Name.textContent = p1.displayName;
+            waitingPlayer1Color.textContent = p1.color;
+            waitingPlayer1Color.className = `p-2 rounded-lg ${COLOR_MAP[p1.color].border} border-2`;
+
+            // Player 2
+            if (p2) {
+                waitingPlayer2Name.textContent = p2.displayName;
+                waitingPlayer2Color.textContent = p2.color;
+                waitingPlayer2Color.className = `p-2 rounded-lg ${COLOR_MAP[p2.color].border} border-2`;
+            } else {
+                waitingPlayer2Name.textContent = "Waiting for opponent...";
+                waitingPlayer2Color.textContent = "??";
+                waitingPlayer2Color.className = `p-2 rounded-lg border-gray-500 border-2`;
             }
-            
-            currentGame = null;
-            currentGameId = null;
-            playerIndex = -1;
-            
-            showView('#view-lobby-list');
-            listenForLobbies();
-            startPresenceSystem(); // Re-start presence when returning to lobby list
+
+            // Controls
+            if (playerIndex === 0) { // Is Host
+                startGameBtn.classList.remove('hidden');
+                startGameBtn.disabled = !p2; // Enable only when P2 joins
+            } else { // Is P2
+                startGameBtn.classList.add('hidden');
+            }
+        }
+
+        function renderGame() {
+            if (!currentGame) return;
+
+            const isMyTurn = currentGame.turn === playerIndex;
+            const myPlayer = currentGame.players[playerIndex];
+            const p1 = currentGame.players[0];
+            const p2 = currentGame.players[1];
+            // Ensure p2 exists before trying to access properties
+            const turnPlayer = currentGame.players[currentGame.turn];
+
+            // Render Status
+            if (myPlayer) {
+                playerNumberDisplay.textContent = `${myPlayer.displayName} (P${playerIndex + 1})`;
+                playerNumberDisplay.className = `text-lg font-bold ${COLOR_MAP[myPlayer.color].border} border-b-2`;
+            }
+            if (turnPlayer) {
+                currentTurnDisplay.textContent = `${turnPlayer.displayName} (P${currentGame.turn + 1})`;
+                currentTurnDisplay.className = `text-lg font-bold ${COLOR_MAP[turnPlayer.color].border} border-b-2`;
+            }
+            currentPhaseDisplay.textContent = currentGame.phase;
+            energyPoolDisplay.textContent = currentGame.energyPool;
+
+            // Update bottom phase indicator
+            bottomPhaseDisplay.textContent = currentGame.phase;
+            if (currentGame.phase === 'buyMove') {
+                bottomPhaseDisplay.className = 'text-2xl font-bold text-center text-yellow-300';
+            } else if (currentGame.phase === 'attack') {
+                bottomPhaseDisplay.className = 'text-2xl font-bold text-center text-red-400';
+            } else {
+                bottomPhaseDisplay.className = 'text-2xl font-bold text-center text-gray-300';
+            }
+
+            // Calculate Budget
+            const myPylons = (myPlayer && myPlayer.buildings) ? myPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
+            currentBudget = (isMyTurn && currentGame.phase === 'buyMove') ? (1 + myPylons) : 0;
+            playerBudgetDisplay.textContent = currentBudget;
+
+            // Render Board
+            renderBoard();
+
+            // Render Controls
+            renderControls(isMyTurn);
+
+            // Render Log
+            gameLog.innerHTML = currentGame.log.map(msg => `<p class="text-sm">${msg}</p>`).join('');
+            gameLog.scrollTop = gameLog.scrollHeight;
+
+            // Check Game Over
+            if (currentGame.status === 'gameOver') {
+                const winnerName = currentGame.players[currentGame.winner].displayName;
+                showModal(`Game Over. ${winnerName} wins!`, true);
+            }
         }
 
         function renderBoard() {
-            if (!currentGame) return;
+            if (playerIndex === -1) return; // Don't render board if not a player
 
-            gameBoard.innerHTML = ''; // Clear board
-            const myPlayer = currentGame.players[playerIndex];
-            const opponent = currentGame.players[(playerIndex + 1) % 2];
-            
-            // Determine my zone
+            gameBoard.innerHTML = '';
             const myZoneStart = (playerIndex === 0) ? 0 : 5;
             const myZoneEnd = (playerIndex === 0) ? 5 : 10;
-            const oppZoneStart = (playerIndex === 0) ? 5 : 10;
-            const oppZoneEnd = (playerIndex === 0) ? 10 : 5; // Not used, just for clarity
+            const p1Color = COLOR_MAP[currentGame.players[0].color];
+            const p2Color = (currentGame.players[1]) ? COLOR_MAP[currentGame.players[1].color] : COLOR_MAP['Red']; // Fallback
+            const myColor = (playerIndex === 0) ? p1Color : p2Color;
+            const enemyColor = (playerIndex === 0) ? p2Color : p1Color;
 
             for (let r = 0; r < BOARD_ROWS; r++) {
                 for (let c = 0; c < BOARD_COLS; c++) {
                     const cell = document.createElement('div');
-                    cell.className = 'grid-cell';
+                    cell.className = 'cell relative aspect-square border border-indigo-500/30 transition-all duration-150';
                     cell.dataset.r = r;
                     cell.dataset.c = c;
-                    
-                    const isMyZone = c >= myZoneStart && c < myZoneEnd;
-                    const unit = getUnitAt(r, c);
-                    
-                    if (isMyZone) {
-                        cell.classList.add(COLOR_MAP[myPlayer.color].bg);
-                        
-                        // Render my units
-                        if (unit) {
-                            const colorClass = COLOR_MAP[myPlayer.color].stroke;
-                            if (unit.type === 'nexus') {
-                                cell.innerHTML = NEXUS_SVG(colorClass);
-                            } else if (unit.type === 'pylon') {
-                                cell.innerHTML = PYLON_SVG(colorClass);
-                            } else if (unit.type === 'mirror') {
-                                cell.innerHTML = MIRROR_SVG(colorClass);
-                            }
-                        }
-                        
-                        // Handle highlighting for actions
-                        if (currentAction === 'setup-nexus-select' && !unit) {
-                            cell.classList.add('cell-valid', 'hover:bg-green-500/50');
-                        }
-                        if (currentAction === 'place-pylon' && !unit) {
-                            cell.classList.add('cell-valid', 'hover:bg-blue-500/50');
-                        }
-                        if (currentAction === 'place-mirror' && !unit) {
-                            cell.classList.add('cell-valid', 'hover:bg-purple-500/50');
-                        }
-                        if (currentAction === 'move-nexus-select' && unit && unit.type === 'nexus') {
-                            cell.classList.add('cell-valid', 'hover:bg-yellow-500/50');
-                        }
-                        if (currentAction === 'move-nexus-target') {
-                             if (isValidNexusMove(selectedUnitLocation, [r, c])) {
-                                 cell.classList.add('cell-valid', 'hover:bg-yellow-500/50');
-                             } else if (!unit) {
-                                 cell.classList.add('cell-invalid');
-                             }
-                        }
 
-                    } else { // Opponent's zone (Shroud Wall)
-                        cell.classList.add('shroud-wall');
-                        // Add targeting highlights
-                        if (currentGame.phase === 'attack') {
-                            cell.classList.add('cell-targetable');
+                    const isMyZone = c >= myZoneStart && c < myZoneEnd;
+                    const isEnemyZone = !isMyZone;
+
+                    if (isMyZone) {
+                        cell.classList.add(myColor.bg);
+                    } else {
+                        cell.classList.add('shroud-wall', 'bg-gray-800/50', 'backdrop-blur-sm');
+                    }
+
+                    // Find and render units
+                    const unit = getUnitAt(r, c);
+                    if (unit) {
+                        const { type, hp, isMine, owner } = unit;
+                        
+                        // HIDDEN INFORMATION: Only render my units, or enemy units in my zone
+                        if (isMine || isMyZone) {
+                            let svg = '';
+                            let unitColor = (owner === 0) ? p1Color.stroke : p2Color.stroke;
+                            
+                            if (type === 'nexus') {
+                                svg = NEXUS_SVG;
+                                cell.innerHTML = `<div class="unit p-1 ${unitColor}">${svg}</div><div class="hp">${hp}/${NEXUS_HP}</div>`;
+                            } else {
+                                svg = (type === 'pylon') ? PYLON_SVG : MIRROR_SVG;
+                                cell.innerHTML = `<div class="unit p-2 ${unitColor}">${svg}</div><div class="hp">${hp}/${BUILDING_HP}</div>`;
+                            }
                         }
                     }
 
-                    // Add click handler
-                    cell.addEventListener('click', () => onCellClick(r, c));
+                    // Add highlights for actions
+                    if (isMyZone) {
+                        if (currentGame.phase === 'setup' && currentAction === 'setup-nexus-select') {
+                            if (!unit) cell.classList.add('hover:bg-green-500/30', 'cursor-pointer');
+                            if (selectedUnitLocation && r === selectedUnitLocation[0] && c === selectedUnitLocation[1]) {
+                                cell.classList.add('bg-green-500/50', 'border-green-400');
+                            }
+                        }
+                        else if (currentAction === 'place-pylon' || currentAction === 'place-mirror') {
+                            if (!unit) cell.classList.add('hover:bg-green-500/30', 'cursor-pointer');
+                        } else if (currentAction === 'move-nexus-select' && unit && unit.type === 'nexus' && unit.isMine) {
+                            cell.classList.add('hover:bg-yellow-500/30', 'cursor-pointer', 'animate-pulse');
+                        } else if (currentAction === 'move-nexus-target') {
+                             if (isValidNexusMove(selectedUnitLocation, [r, c]) && !unit) {
+                                cell.classList.add('hover:bg-yellow-500/30', 'cursor-pointer');
+                             }
+                        }
+                    }
+
                     gameBoard.appendChild(cell);
                 }
             }
-            
-            // Highlight selected Nexus (for setup or move)
-            if (selectedUnitLocation) {
-                const [r, c] = selectedUnitLocation;
-                const cell = $(`[data-r="${r}"][data-c="${c}"]`);
-                if (cell) cell.classList.add('cell-selected');
-            }
-            
-            // Highlight attack vectors
-            if (currentGame.phase === 'attack' && currentGame.turn === playerIndex) {
-                const [r, c] = myPlayer.nexusLocation;
-                for (let dr = -1; dr <= 1; dr++) {
-                    for (let dc = -1; dc <= 1; dc++) {
-                        if (dr === 0 && dc === 0) continue;
-                        
-                        // Check attack restriction
-                        const lastVec = currentGame.lastShotVector;
-                        if (lastVec && dr === -lastVec[0] && dc === -lastVec[1]) {
-                             continue; // Skip restricted vector
-                        }
-
-                        const [nr, nc] = [r + dr, c + dc];
-                        if (nr >= 0 && nr < BOARD_ROWS && nc >= 0 && nc < BOARD_COLS) {
-                            $(`[data-r="${nr}"][data-c="${nc}"]`)?.classList.add('attack-vector');
-                        }
-                    }
-                }
-            }
         }
 
-        function updateGameUI() {
-            if (!currentGame || playerIndex === -1) return;
-            
-            const myPlayer = currentGame.players[playerIndex];
-            const opponent = currentGame.players[(playerIndex + 1) % 2];
-            const isMyTurn = currentGame.turn === playerIndex;
+        function renderControls(isMyTurn) {
+            [setupControls, buyMoveControls, attackControls, waitingControls].forEach(c => c.classList.add('hidden'));
+            setupWaitingMsg.classList.add('hidden');
+            bottomNextPhaseBtn.classList.add('hidden'); // Always hide bottom button by default
 
-            // Update energy and budget
-            const pylonCount = myPlayer.buildings.filter(b => b.type === 'pylon').length;
-            currentBudget = 1 + pylonCount;
-            energyPoolDisplay.textContent = currentGame.energyPool;
-            budgetDisplay.textContent = currentBudget;
-            
-            // Update Player Info panels
-            playerName[playerIndex].textContent = `${myPlayer.name} (You)`;
-            playerName[(playerIndex + 1) % 2].textContent = opponent.name;
-            playerHp[playerIndex].textContent = `HP: ${myPlayer.nexusHP}`;
-            playerHp[(playerIndex + 1) % 2].textContent = `HP: ${opponent.nexusHP}`;
-            
-            // Highlight active player
-            playerInfo[currentGame.turn].classList.add('border-yellow-400', 'shadow-lg');
-            playerInfo[(currentGame.turn + 1) % 2].classList.remove('border-yellow-400', 'shadow-lg');
-            
-            // Apply player colors to info boxes
-            // Check if opponent and color exist before applying
-            if (myPlayer && myPlayer.color) {
-                playerInfo[playerIndex].classList.add(COLOR_MAP[myPlayer.color].bg, COLOR_MAP[myPlayer.color].border);
-            }
-            if (opponent && opponent.color) {
-                playerInfo[(playerIndex + 1) % 2].classList.add(COLOR_MAP[opponent.color].bg, COLOR_MAP[opponent.color].border);
-            }
-            
-            // Update Event Log
-            eventLog.innerHTML = '';
-            currentGame.log.forEach(msg => {
-                const logEntry = document.createElement('p');
-                logEntry.textContent = `> ${msg}`;
-                if (msg.includes('HIT!')) logEntry.classList.add('text-red-400', 'font-bold');
-                if (msg.includes('reflects')) logEntry.classList.add('text-purple-400');
-                if (msg.includes('refunded')) logEntry.classList.add('text-cyan-400');
-                eventLog.appendChild(logEntry);
-            });
-            eventLog.scrollTop = eventLog.scrollHeight;
-            
-            // Update Phase Indicator and Controls
-            phaseIndicator.textContent = currentGame.phase.toUpperCase();
-            
-            // Hide all controls
-            setupControls.classList.add('hidden');
-            buyMoveControls.classList.add('hidden');
-            attackControls.classList.add('hidden');
-            waitingControls.classList.add('hidden');
-            bottomNextPhaseBtn.classList.add('hidden'); // Hide bottom button
-
-            if (currentGame.status === 'gameOver') {
-                phaseIndicator.textContent = "GAME OVER";
-                phaseIndicator.classList.add('text-red-500');
+            if (playerIndex === -1) {
                 waitingControls.classList.remove('hidden');
-                waitingControls.querySelector('p').textContent = "Game Over. Refresh to play again.";
                 return;
             }
 
+            // Setup phase logic (not turn-based)
             if (currentGame.phase === 'setup') {
-                phaseIndicator.textContent = "NEXUS SETUP";
-                bottomNextPhaseBtn.classList.remove('hidden');
-                
-                if (myPlayer.hasConfirmedNexus) {
-                    setupControls.classList.add('hidden'); // Hide side controls
-                    waitingControls.classList.remove('hidden');
-                    waitingControls.querySelector('p').textContent = "Waiting for opponent to place Nexus...";
-                    bottomNextPhaseBtn.disabled = true;
-                    bottomNextPhaseBtn.textContent = "Placement Confirmed";
-                } else {
+                if (!currentGame.players[playerIndex].nexusLocation) {
+                    // This player hasn't placed
                     setupControls.classList.remove('hidden');
-                    bottomNextPhaseBtn.disabled = !selectedUnitLocation; // Enable if location is selected
-                    bottomNextPhaseBtn.textContent = "Confirm Placement";
-                    // Sync side button
-                    confirmNexusBtn.disabled = !selectedUnitLocation;
+                    currentAction = 'setup-nexus-select';
+                    confirmNexusBtn.disabled = !selectedUnitLocation; // Enable only if a cell is selected
+                } else {
+                    // This player has placed, check opponent
+                    const opponent = currentGame.players[(playerIndex + 1) % 2];
+                    if (!opponent || !opponent.nexusLocation) {
+                        setupWaitingMsg.classList.remove('hidden'); // Show waiting message
+                    }
                 }
-            } else if (isMyTurn) {
-                switch (currentGame.phase) {
-                    case 'buyMove':
-                        phaseIndicator.classList.remove('text-green-400');
-                        phaseIndicator.classList.add('text-yellow-400');
-                        buyMoveControls.classList.remove('hidden');
-                        bottomNextPhaseBtn.classList.add('hidden'); // Hide bottom button
-                        // Toggle button disabled states
-                        placePylonBtn.disabled = (currentGame.energyPool < PYLON_COST || currentBudget < PYLON_COST);
-                        placeMirrorBtn.disabled = (currentGame.energyPool < MIRROR_COST || currentBudget < MIRROR_COST);
-                        moveNexusBtn.disabled = false;
-                        undoActionBtn.disabled = turnStateHistory.length <= 1; // Disable if no actions to undo
-                        break;
-                    case 'attack':
-                        phaseIndicator.classList.remove('text-yellow-400');
-                        phaseIndicator.classList.add('text-green-400');
-                        attackControls.classList.remove('hidden');
-                        bottomNextPhaseBtn.classList.add('hidden'); // Hide bottom button
-                        break;
-                }
-            } else { // Not my turn
-                phaseIndicator.classList.remove('text-yellow-400', 'text-green-400');
-                waitingControls.classList.remove('hidden');
-                waitingControls.querySelector('p').textContent = "Waiting for opponent...";
-                bottomNextPhaseBtn.classList.add('hidden');
+                return; // End control render for setup
+            }
+
+            // Post-setup is turn-based
+            if (!isMyTurn) {
+                waitingControls.classList.remove('hidden'); // Show waiting message
+                return;
+            }
+            
+            // It is my turn
+            switch(currentGame.phase) {
+                // case 'setup': // Handled above
+                //     break;
+                case 'buyMove':
+                    buyMoveControls.classList.remove('hidden');
+                    bottomNextPhaseBtn.classList.remove('hidden'); // Show bottom button
+                    // Toggle button disabled states
+                    placePylonBtn.disabled = (currentGame.energyPool < PYLON_COST || currentBudget < PYLON_COST);
+                    placeMirrorBtn.disabled = (currentGame.energyPool < MIRROR_COST || currentBudget < MIRROR_COST);
+                    break;
+                case 'attack':
+                    attackControls.classList.remove('hidden');
+                    // Disable all attack buttons by default
+                    $$('#attack-controls button[data-dir]').forEach(btn => btn.disabled = false);
+
+                    // Disable reverse-shot button
+                    const lastVec = currentGame.lastShotVector;
+                    if (lastVec) {
+                        const [lastDx, lastDy] = lastVec;
+                        const reverseVec = [-lastDx, -lastDy];
+                        for (const [dir, vec] of Object.entries(DIRECTIONS)) {
+                            if (vec[0] === reverseVec[0] && vec[1] === reverseVec[1]) {
+                                $(`#attack-${dir.toLowerCase()}-btn`).disabled = true;
+                                break;
+                            }
+                        }
+                    }
+                    break;
             }
         }
 
-        async function onCellClick(r, c) {
-            const myPlayer = currentGame.players[playerIndex];
-            const isMyTurn = currentGame.turn === playerIndex;
-            const unit = getUnitAt(r, c);
-            
-            // --- Setup Phase ---
-            if (currentGame.phase === 'setup' && !myPlayer.hasConfirmedNexus) {
+        // --- Game Logic ---
+
+        // Event Handlers
+        function handleBoardClick(e) {
+            const cell = e.target.closest('.cell');
+            if (!cell || !currentGame || playerIndex === -1) return;
+
+            // Allow setup selection even if not "my turn"
+            if (currentGame.phase === 'setup' && !currentGame.players[playerIndex].nexusLocation) {
+                const r = parseInt(cell.dataset.r);
+                const c = parseInt(cell.dataset.c);
                 const myZoneStart = (playerIndex === 0) ? 0 : 5;
                 const myZoneEnd = (playerIndex === 0) ? 5 : 10;
+                const isMyZone = c >= myZoneStart && c < myZoneEnd;
                 
-                if (c >= myZoneStart && c < myZoneEnd) {
-                    currentAction = 'setup-nexus-select';
+                if (isMyZone && currentAction === 'setup-nexus-select' && !getUnitAt(r,c)) {
                     selectedUnitLocation = [r, c];
                     confirmNexusBtn.disabled = false;
-                    bottomNextPhaseBtn.disabled = false;
-                    renderBoard();
+                    renderBoard(); // Re-render to show selection
                 }
                 return;
             }
 
-            if (!isMyTurn) return; // Not my turn, do nothing
-            
-            // --- Buy/Move Phase ---
+            // All other actions must be on my turn
+            if (currentGame.turn !== playerIndex) return;
+
+            const r = parseInt(cell.dataset.r);
+            const c = parseInt(cell.dataset.c);
+            const myZoneStart = (playerIndex === 0) ? 0 : 5;
+            const myZoneEnd = (playerIndex === 0) ? 5 : 10;
+            const isMyZone = c >= myZoneStart && c < myZoneEnd;
+
             if (currentGame.phase === 'buyMove') {
-                if (currentAction === 'place-pylon') {
-                    if (!unit && currentBudget >= PYLON_COST && currentGame.energyPool >= PYLON_COST) {
-                        placeBuilding('pylon', r, c);
-                    }
-                } else if (currentAction === 'place-mirror') {
-                    if (!unit && currentBudget >= MIRROR_COST && currentGame.energyPool >= MIRROR_COST) {
-                        placeBuilding('mirror', r, c);
-                    }
+                if (currentAction === 'place-pylon' && isMyZone) {
+                    placeBuilding('pylon', r, c);
+                } else if (currentAction === 'place-mirror' && isMyZone) {
+                    placeBuilding('mirror', r, c);
                 } else if (currentAction === 'move-nexus-select') {
-                    if (unit && unit.type === 'nexus' && unit.ownerId === currentUserId) {
+                    const unit = getUnitAt(r, c);
+                    if (unit && unit.type === 'nexus' && unit.isMine) {
                         selectedUnitLocation = [r, c];
                         currentAction = 'move-nexus-target';
-                        renderBoard();
+                        renderBoard(); // Re-render for highlights
                     }
                 } else if (currentAction === 'move-nexus-target') {
-                    if (isValidNexusMove(selectedUnitLocation, [r,c])) {
+                    if (isValidNexusMove(selectedUnitLocation, [r,c]) && !getUnitAt(r,c)) {
                         moveNexus(selectedUnitLocation, [r, c]);
                     } else {
-                        logEvent('Invalid Nexus move.', false);
+                        showError("Invalid move target.");
                         cancelCurrentAction();
                     }
                 }
             }
-            // --- Attack Phase ---
-            else if (currentGame.phase === 'attack') {
-                const [nr, nc] = myPlayer.nexusLocation;
-                const [dr, dc] = [r - nr, c - nc];
-                
-                // Check if it's a valid adjacent cell
-                if (Math.abs(dr) <= 1 && Math.abs(dc) <= 1 && (dr !== 0 || dc !== 0)) {
-                    // Check restriction
-                    const lastVec = currentGame.lastShotVector;
-                    if (lastVec && dr === -lastVec[0] && dc === -lastVec[1]) {
-                        return showError("Cannot fire in the exact opposite direction of the last shot.");
-                    }
-                    attackWithLaser([dr, dc]);
-                }
-            }
         }
-        
-        // --- Player Actions ---
 
         async function confirmNexusPlacement() {
-            if (currentGame.phase !== 'setup' || !selectedUnitLocation) return;
-            
-            showLoading(true);
+            if (!selectedUnitLocation) return showError("No location selected.");
+
             const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', currentGameId);
+            const [r, c] = selectedUnitLocation;
             
-            try {
-                // We need to update our player object in the array
-                const myPlayer = currentGame.players[playerIndex];
-                myPlayer.nexusLocation = selectedUnitLocation;
-                myPlayer.hasConfirmedNexus = true;
+            // Create a deep copy to modify
+            const newPlayers = JSON.parse(JSON.stringify(currentGame.players));
+            newPlayers[playerIndex].nexusLocation = [r, c];
+            
+            let updateData = { players: newPlayers };
+            let newLog = [...currentGame.log, `${newPlayers[playerIndex].displayName} (P${playerIndex+1}) placed Nexus.`];
 
-                const opponent = currentGame.players[(playerIndex + 1) % 2];
-                
-                let newPhase = 'setup';
-                let newLog = currentGame.log;
-                
-                // Check if both players have confirmed
-                if (myPlayer.hasConfirmedNexus && opponent.hasConfirmedNexus) {
-                    newPhase = 'buyMove';
-                    newLog = [...newLog, "Both players have placed their Nexus. The game begins!", "Player 1's turn (Buy/Move)."];
-                } else {
-                    newLog = [...newLog, `${myPlayer.name} has confirmed Nexus placement.`];
-                }
-
-                await updateDoc(gameRef, {
-                    players: currentGame.players,
-                    phase: newPhase,
-                    log: newLog
-                });
-                
-                cancelCurrentAction();
-                // onSnapshot will handle the UI update
-
-            } catch (error) {
-                console.error("Nexus Placement Error:", error);
-                showError("Could not confirm Nexus placement.");
+            // Check if opponent has placed
+            const opponent = newPlayers[(playerIndex + 1) % 2];
+            if (opponent && opponent.nexusLocation) {
+                // Both players have placed, start the game
+                updateData.phase = 'buyMove';
+                updateData.turn = 0; // P1 starts
+                newLog.push(`Both players are ready. Game start!`);
+                newLog.push(`${newPlayers[0].displayName} (P1)'s turn.`);
             }
-            showLoading(false);
+            updateData.log = newLog;
+
+            try {
+                await updateDoc(gameRef, updateData);
+                cancelCurrentAction(); // Clear selection
+                // The onSnapshot listener will handle re-rendering
+            } catch (error) {
+                console.error("Confirm Nexus Error:", error);
+                showError("Could not place Nexus.");
+            }
         }
 
         async function placeBuilding(type, r, c) {
             const cost = (type === 'pylon') ? PYLON_COST : MIRROR_COST;
+            if (getUnitAt(r,c)) return showError("Cell is occupied.");
+            if (currentGame.energyPool < cost) return showError("Not enough Shared Energy.");
+            if (currentBudget < cost) return showError("Not enough Budget.");
             
-            const myPlayer = currentGame.players[playerIndex];
-            myPlayer.buildings.push({
-                type: type,
-                location: [r, c],
-                hp: (type === 'pylon') ? PYLON_HP : MIRROR_HP
-            });
-
-            const newEnergyPool = currentGame.energyPool - cost;
-            const newLog = [...currentGame.log, `${myPlayer.name} built a ${type}.`];
-
             const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', currentGameId);
+            const newBuilding = { type, location: [r, c], hp: BUILDING_HP };
+            
+            // Deep copy players array to modify it
+            const newPlayers = JSON.parse(JSON.stringify(currentGame.players));
+            newPlayers[playerIndex].buildings.push(newBuilding);
+
             try {
                 await updateDoc(gameRef, {
-                    players: currentGame.players,
-                    energyPool: newEnergyPool,
-                    log: newLog
+                    players: newPlayers,
+                    energyPool: currentGame.energyPool - cost,
+                    log: [...currentGame.log, `Player ${playerIndex+1} placed a ${type}.`]
                 });
+                // No need to update budget locally, onSnapshot will trigger renderGame
                 cancelCurrentAction();
             } catch (error) {
-                console.error("Build Error:", error);
+                console.error("Place Building Error:", error);
                 showError("Could not place building.");
-                // Revert local state on error? onSnapshot should handle it.
             }
         }
-        
+
         function isValidNexusMove(from, to) {
             if (!from || !to) return false;
             const [r1, c1] = from;
             const [r2, c2] = to;
-
-            // Target must be empty
-            if (getUnitAt(r2, c2)) return false;
-
-            // BFS for pathfinding
-            let q = [ [r1, c1, 0] ]; // [r, c, distance]
-            let visited = new Set([`${r1},${c1}`]);
-
-            const myZoneStart = (playerIndex === 0) ? 0 : 5;
-            const myZoneEnd = (playerIndex === 0) ? 5 : 10;
-
-            while (q.length > 0) {
-                let [r, c, dist] = q.shift();
-
-                if (dist >= NEXUS_MOVE_RANGE) continue; // Max range reached
-
-                // Check 4 cardinal directions
-                for (const [dr, dc] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-                    let [nr, nc] = [r + dr, c + dc];
-
-                    // Found the target
-                    if (nr === r2 && nc === c2) return true;
-
-                    // Check bounds (stay in player's zone)
-                    if (nr >= 0 && nr < BOARD_ROWS && nc >= myZoneStart && nc < myZoneEnd) {
-                        const key = `${nr},${nc}`;
-                        // Check if visited or occupied (only other buildings block)
-                        const unit = getUnitAt(nr, nc);
-                        if (!visited.has(key) && (!unit || (unit.type === 'nexus' && nr === r1 && nc === c1)) ) { // Can move *from* nexus spot
-                            visited.add(key);
-                            q.push([nr, nc, dist + 1]);
-                        }
-                    }
-                }
-            }
+            const dist = Math.abs(r1 - r2) + Math.abs(c1 - c2); // Manhattan distance
             
-            return false; // No valid path found
+            // Basic range check
+            if (dist === 0 || dist > NEXUS_MOVE_RANGE) return false;
+
+            // Simple check: is it cardinal only?
+            if(r1 !== r2 && c1 !== c2) return false; // Not cardinal move
+
+            // TODO: Add path obstruction check
+            // This basic check is fine for now
+            return true;
         }
 
         async function moveNexus(from, to) {
-            const myPlayer = currentGame.players[playerIndex];
-            myPlayer.nexusLocation = to;
-            
-            const newLog = [...currentGame.log, `${myPlayer.name} moved their Nexus.`];
-
             const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', currentGameId);
+            const newPlayers = JSON.parse(JSON.stringify(currentGame.players));
+            newPlayers[playerIndex].nexusLocation = to;
+
             try {
                 await updateDoc(gameRef, {
-                    players: currentGame.players,
-                    log: newLog
+                    players: newPlayers,
+                    log: [...currentGame.log, `Player ${playerIndex+1} moved Nexus.`]
                 });
                 cancelCurrentAction();
             } catch (error) {
-                console.error("Move Error:", error);
+                console.error("Move Nexus Error:", error);
                 showError("Could not move Nexus.");
             }
         }
 
-        async function undoLastAction() {
-            cancelCurrentAction(); // Clear any selections
-            if (turnStateHistory.length <= 1) {
-                return showError("No actions to undo.");
-            }
-            
-            turnStateHistory.pop(); // Remove the current state
-            const prevState = turnStateHistory[turnStateHistory.length - 1]; // Get the state to restore
-            
-            if (!prevState) return;
-
-            const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', currentGameId);
-            try {
-                // Restore the key game state properties
-                await updateDoc(gameRef, {
-                    players: prevState.players,
-                    energyPool: prevState.energyPool,
-                    log: prevState.log 
-                });
-                // onSnapshot will handle re-rendering and updating the history
-            } catch (error) {
-                console.error("Undo Error:", error);
-                showError("Could not undo action.");
-            }
-        }
-
         async function endBuyMovePhase() {
-            // Apply pending refunds from last turn
-            let newEnergyPool = currentGame.energyPool;
-            const myRefund = currentGame.pendingRefunds[playerIndex] || 0;
-            let newLog = currentGame.log;
-            
-            if (myRefund > 0) {
-                newEnergyPool += myRefund;
-                newLog = [...newLog, `Refunded ${myRefund} energy from destroyed units.`];
-            }
-            // Clear my refund
-            const newPendingRefunds = { ...currentGame.pendingRefunds, [playerIndex]: 0 };
-
             const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', currentGameId);
             try {
                 await updateDoc(gameRef, {
                     phase: 'attack',
-                    energyPool: newEnergyPool,
-                    log: newLog,
-                    pendingRefunds: newPendingRefunds
+                    log: [...currentGame.log, `Player ${playerIndex+1} is ready to attack.`]
                 });
             } catch (error) {
                 console.error("End Phase Error:", error);
                 showError("Could not end phase.");
             }
         }
-        
-        async function skipAttack() {
-            const nextTurn = (playerIndex + 1) % 2;
-            const nextPlayer = currentGame.players[nextTurn];
-            
-            let newLog = [...currentGame.log, `${currentGame.players[playerIndex].name} skipped their attack.`, `Player ${nextTurn + 1}'s turn (${nextPlayer.name}).`];
 
-            // Apply pending refunds for the *next* player
-            let newEnergyPool = currentGame.energyPool;
-            const nextPlayerRefund = currentGame.pendingRefunds[nextTurn] || 0;
-            const newPendingRefunds = { ...currentGame.pendingRefunds };
-            
-            if (nextPlayerRefund > 0) {
-                newEnergyPool += nextPlayerRefund;
-                newLog = [...newLog, `Refunded ${nextPlayerRefund} energy from destroyed units.`];
-                newPendingRefunds[nextTurn] = 0; // Clear their refund
-            }
-            
+        async function skipAttack() {
             const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', currentGameId);
+            const newTurn = (currentGame.turn + 1) % 2;
+            const newEnergy = currentGame.energyPool + currentGame.pendingEnergyRefund;
+
             try {
                 await updateDoc(gameRef, {
-                    turn: nextTurn,
+                    turn: newTurn,
                     phase: 'buyMove',
-                    log: newLog,
-                    lastShotVector: null, // Clear vector
-                    energyPool: newEnergyPool,
-                    pendingRefunds: newPendingRefunds,
-                    lastLaserPath: [], // Clear laser path
-                    lastAttackerIndex: null
+                    energyPool: newEnergy,
+                    pendingEnergyRefund: 0, // Reset for new turn
+                    lastShotVector: null, // No shot fired
+                    log: [
+                        ...currentGame.log,
+                        `Player ${playerIndex+1} skipped attack.`,
+                        (currentGame.pendingEnergyRefund > 0 ? `+${currentGame.pendingEnergyRefund} energy refunded to pool.` : ''),
+                        `Turn ends. ${currentGame.players[newTurn].displayName} (P${newTurn + 1})'s turn.`
+                    ].filter(Boolean) // Filter out empty refund message
                 });
             } catch (error) {
                 console.error("Skip Attack Error:", error);
@@ -1768,383 +870,715 @@
             }
         }
 
-        async function attackWithLaser(direction) {
-            const [dr, dc] = direction;
-            const myPlayer = currentGame.players[playerIndex];
-            const [startR, startC] = myPlayer.nexusLocation;
+        async function handleAttack(dx, dy) {
+            if (playerIndex === -1 || !currentGame.players[playerIndex]) return;
+            
+            const myNexusLoc = currentGame.players[playerIndex].nexusLocation;
+            if (!myNexusLoc) return;
 
-            // Run simulation
-            const { path, hits, logMsgs, finalGameState } = traceLaserPath([startR, startC], [dr, dc], currentGame);
-            
-            let newLog = [...currentGame.log, `${myPlayer.name} fires a laser ${DIRECTIONS[JSON.stringify(direction)]}!`];
-            newLog = newLog.concat(logMsgs);
-            
-            let newStatus = 'inProgress';
-            
-            // Check for game over
-            const opponent = finalGameState.players[(playerIndex + 1) % 2];
-            if (opponent.nexusHP <= 0) {
-                newStatus = 'gameOver';
-                newLog.push(`Opponent's Nexus destroyed! ${myPlayer.name} wins!`);
-            }
-            
-            const nextTurn = (playerIndex + 1) % 2;
-            const nextPlayer = finalGameState.players[nextTurn];
-            if (newStatus !== 'gameOver') {
-                 newLog.push(`Player ${nextTurn + 1}'s turn (${nextPlayer.name}).`);
-            }
+            // Run laser simulation
+            const { path, hits, logMsgs, finalGameState } = traceLaserPath(myNexusLoc, [dx, dy], currentGame);
 
-            // Handle refunds
-            const newPendingRefunds = { ...finalGameState.pendingRefunds };
-            let destroyedUnits = 0;
-            hits.forEach(hit => {
-                if ((hit.type === 'pylon' || hit.type === 'mirror') && hit.hp <= 0) {
-                    destroyedUnits++;
-                }
-            });
-            
-            if (destroyedUnits > 0) {
-                // Add refund to the *attacker's* (current player's) pending total
-                newPendingRefunds[playerIndex] = (newPendingRefunds[playerIndex] || 0) + destroyedUnits;
-                newLog.push(`+${destroyedUnits} energy will be refunded next turn.`);
-            }
-            
-            // Apply pending refunds for the *next* player
-            let newEnergyPool = finalGameState.energyPool;
-            const nextPlayerRefund = newPendingRefunds[nextTurn] || 0;
-            if (nextPlayerRefund > 0) {
-                newEnergyPool += nextPlayerRefund;
-                newLog.push(`Refunded ${nextPlayerRefund} energy to ${nextPlayer.name}.`);
-                newPendingRefunds[nextTurn] = 0; // Clear their refund
-            }
-
+            // Prepare update
             const gameRef = doc(db, 'artifacts', appId, 'public', 'data', 'zero_sum_games', currentGameId);
+            const newTurn = (currentGame.turn + 1) % 2;
+            
+            // Apply pending energy refund from *last* turn
+            finalGameState.energyPool += currentGame.pendingEnergyRefund;
+            
+            // Set up pending refund for *next* turn
+            const destroyedBuildings = hits.filter(h => h.type !== 'nexus' && h.hp <= 0).length;
+            finalGameState.pendingEnergyRefund = destroyedBuildings; // 1 energy per destroyed building
+
+            // Finalize state update
+            finalGameState.lastShotVector = [dx, dy];
+            finalGameState.turn = newTurn;
+            finalGameState.phase = 'buyMove';
+            
+            // Build new log
+            let newLog = [
+                ...currentGame.log, 
+                ...logMsgs, 
+                `Laser path complete.`
+            ];
+            
+            if (currentGame.pendingEnergyRefund > 0) {
+                 newLog.push(`+${currentGame.pendingEnergyRefund} energy refunded to pool.`);
+            }
+            // Check if game ended before announcing next turn
+            if (finalGameState.status !== 'gameOver') {
+                 newLog.push(`Turn ends. ${finalGameState.players[newTurn].displayName} (P${newTurn + 1})'s turn.`);
+            }
+
+            finalGameState.log = newLog;
+
             try {
-                const updateData = {
-                    players: finalGameState.players,
-                    energyPool: newEnergyPool,
-                    turn: (newStatus === 'gameOver') ? currentGame.turn : nextTurn,
-                    phase: (newStatus === 'gameOver') ? 'gameOver' : 'buyMove',
-                    lastShotVector: direction,
-                    log: newLog,
-                    status: newStatus,
-                    pendingRefunds: newPendingRefunds,
-                    lastLaserPath: path,
-                    lastAttackerIndex: playerIndex
-                };
-                
-                await updateDoc(gameRef, updateData);
-                // onSnapshot will trigger animation for all players
-                
+                await updateDoc(gameRef, finalGameState);
+                animateLaser(path);
             } catch (error) {
                 console.error("Attack Error:", error);
                 showError("Could not process attack.");
             }
         }
         
-        /**
-         * Traces the path of a laser, returning the path, hits, and new game state.
-         * This function is wrapped in a try/catch/finally to guarantee it always
-         * returns a valid object, preventing crashes in the calling function.
-         */
-        function traceLaserPath(start, direction, gameState) {
-            let [r, c] = start;
-            let [dr, dc] = direction;
+        // --- Laser Logic ---
+        function traceLaserPath(startLoc, direction, gameState) {
+            let [r, c] = startLoc;
+            let [dx, dy] = direction;
             
-            // 1. Initialize all return values.
-            // These will be returned even if the loop fails.
-            let path = [start];
+            let path = [[r, c]]; // Start at nexus
             let hits = [];
-            let logMsgs = [];
-            let newGameState;
+            let logMsgs = [`Player ${playerIndex+1} (${currentGame.players[playerIndex].displayName}) fires laser [${dx}, ${dy}] from (${r},${c})`];
+            let newGameState = JSON.parse(JSON.stringify(gameState)); // Deep copy
+            let players = newGameState.players;
 
-            try {
-                // 2. Create a deep copy of game state to modify
-                newGameState = JSON.parse(JSON.stringify(gameState));
-                
-                let maxSteps = BOARD_ROWS * BOARD_COLS * 2; // Prevent infinite loops
+            for (let i = 0; i < 40; i++) { // Max path length
+                r += dx;
+                c += dy;
+                path.push([r, c]);
 
-                // 3. Run the simulation inside the try block
-                for (let i = 0; i < maxSteps; i++) {
-                    [r, c] = [r + dr, c + dc]; // Move to next cell
+                // 1. Check Out of Bounds (Walls)
+                if (r < 0 || r >= BOARD_ROWS || c < 0 || c >= BOARD_COLS) {
+                    const [prevR, prevC] = path[path.length - 2];
+                    logMsgs.push(`Laser hits wall at (${prevR},${prevC})`);
 
-                    // 1. Check Board Boundaries
-                    if (r < 0 || r >= BOARD_ROWS || c < 0 || c >= BOARD_COLS) {
-                        // Hit a boundary
-                        let [pr, pc] = path[path.length - 1]; // Previous cell
+                    if (dx !== 0 && dy !== 0) { // Diagonal hit
+                        let r_hit = r < 0 || r >= BOARD_ROWS;
+                        let c_hit = c < 0 || c >= BOARD_COLS;
 
-                        // Diagonal hit on side wall (c < 0 or c >= COLS)
-                        if ((c < 0 || c >= BOARD_COLS) && dr !== 0 && dc !== 0) {
-                            logMsgs.push(`Beam reflects off side wall!`);
-                            c = (c < 0) ? 0 : BOARD_COLS - 1; // Clamp to wall
-                            dc = -dc; // Flip horizontal
+                        if (r_hit) {
+                            dx = -dx; // Hit T/B wall, flip vertical (user's spec)
+                            logMsgs.push(`Laser reflects off N/S wall.`);
                         }
-                        // Diagonal hit on top/bottom wall (r < 0 or r >= ROWS)
-                        else if ((r < 0 || r >= BOARD_ROWS) && dr !== 0 && dc !== 0) {
-                            logMsgs.push(`Beam reflects off back wall!`);
-                            r = (r < 0) ? 0 : BOARD_ROWS - 1; // Clamp to wall
-                            dr = -dr; // Flip vertical
+                        if (c_hit) {
+                            dy = -dy; // Hit L/R wall, flip horizontal (inferred)
+                            logMsgs.push(`Laser reflects off E/W wall.`);
                         }
-                        // Orthogonal hit or corner hit
-                        else {
-                            logMsgs.push(`Beam dissipated out of bounds at (${pr}, ${pc}).`);
-                            path.push([pr, pc]); // Add final coordinate
-                            break; // End path
+                        
+                        // Correction: user's spec from 2025-11-13T06:46Z
+                        // "a laser that is going diagonally right-down... hits the side-boundary... will continue... going right-up."
+                        // Right-down (SE) = [1, 1]
+                        // Side-boundary (c_hit)
+                        // Right-up (NE) = [-1, 1]
+                        // This means dx flips. dx = -dx.
+                        
+                        // "diagonally hitting a board boundary... flipping vertical direction."
+                        // This implies if c_hit, flip dx. if r_hit, flip dy.
+                        
+                        // Let's reset logic to match latest user request
+                        dx = direction[0]; // Reset dx
+                        dy = direction[1]; // Reset dy
+                        
+                        if (r_hit) {
+                            dx = -dx; // Hit T/B wall, flip vertical
+                            logMsgs.push(`Laser reflects off N/S wall.`);
                         }
-                        path.push([r, c]); // Add reflection point
-                        continue; // Continue from new reflection
+                        if (c_hit) {
+                            dy = -dy; // Hit L/R wall, flip horizontal
+                            logMsgs.push(`Laser reflects off E/W wall.`);
+                        }
+                        // This logic is for orthogonal reflection.
+                        // User's logic: "diagonal... hits side... flipping vertical"
+                        // [1, 1] (SE) hits side (c_hit) -> [ -1, 1 ] (NE)
+                        // This means if c_hit, dx = -dx.
+                        // if r_hit, dy = -dy.
+                        
+                        // Let's re-read again.
+                        // "diagonally hitting a board boundary, the laser continues down the same row along the wall, but flipping vertical direction."
+                        // This text is contradictory.
+                        // Let's follow the EXAMPLE: "right-down... hits the side-boundary... going right-up."
+                        // [1, 1] (SE) -> hits side -> [-1, 1] (NE). This is dx = -dx.
+                        // Let's assume hitting T/B wall flips horizontal:
+                        // [1, 1] (SE) -> hits bottom -> [1, -1] (SW). This is dy = -dy.
+                        
+                        // Reset dx/dy again to implement this
+                        dx = direction[0];
+                        dy = direction[1];
+
+                        if (r_hit) { // Hit T/B
+                            dy = -dy; 
+                            logMsgs.push(`Laser reflects off N/S wall.`);
+                        }
+                        if (c_hit) { // Hit L/R
+                            dx = -dx; 
+                            logMsgs.push(`Laser reflects off E/W wall.`);
+                        }
+
+                        // Recalculate new position from *previous* valid cell
+                        r = prevR + dx;
+                        c = prevC + dy;
+                        path[path.length-1] = [r,c]; // Correct the path
+                        direction = [dx, dy]; // Update direction for next loop
+                        continue;
                     }
 
-                    path.push([r, c]); // Add current cell to path
+                    // Orthogonal hit on back/side wall
+                    logMsgs.push(`Laser dissipates out of bounds.`);
+                    break;
+                }
 
-                    // 2. Check for Unit Hit
-                    let hitUnit = null;
-                    let hitPlayerIndex = -1;
-                    let hitBuildingIndex = -1;
+                // 2. Check for Unit Hit
+                let hitUnit = null;
+                let hitOwnerIndex = -1;
 
-                    // Find the unit in the *new* game state
-                    for (let pIdx = 0; pIdx < newGameState.players.length; pIdx++) {
-                        const player = newGameState.players[pIdx];
-                        if (player.nexusLocation && player.nexusLocation[0] === r && player.nexusLocation[1] === c) {
-                            hitUnit = { type: 'nexus', ...player, hp: player.nexusHP, ownerId: player.userId };
-                            hitPlayerIndex = pIdx;
+                for (let pIdx = 0; pIdx < players.length; pIdx++) {
+                    const player = players[pIdx];
+                    // Check Nexus
+                    if (player.nexusLocation && player.nexusLocation[0] === r && player.nexusLocation[1] === c) {
+                        hitUnit = player; // Hit the player object to access nexusHP
+                        hitUnit.type = 'nexus'; // Add type for logic
+                        hitOwnerIndex = pIdx;
+                        break;
+                    }
+                    // Check Buildings
+                    for (let bIdx = 0; bIdx < player.buildings.length; bIdx++) {
+                        const building = player.buildings[bIdx];
+                        if (building.location[0] === r && building.location[1] === c) {
+                            hitUnit = building;
+                            hitOwnerIndex = pIdx;
                             break;
                         }
-                        const bIdx = player.buildings.findIndex(b => b.location[0] === r && b.location[1] === c);
-                        if (bIdx !== -1) {
-                            hitUnit = { ...player.buildings[bIdx], ownerId: player.userId };
-                            hitPlayerIndex = pIdx;
-                            hitBuildingIndex = bIdx;
-                            break;
-                        }
                     }
-
-                    if (hitUnit) {
-                        const ownerName = newGameState.players[hitPlayerIndex].name;
-                        hits.push(hitUnit);
-
-                        if (hitUnit.type === 'nexus') {
-                            logMsgs.push(`HIT! ${ownerName}'s Nexus!`);
-                            newGameState.players[hitPlayerIndex].nexusHP -= 1;
-                            hitUnit.hp -= 1; // Update for hits array
-                            if (newGameState.players[hitPlayerIndex].nexusHP <= 0) {
-                                logMsgs.push(`${ownerName}'s Nexus is destroyed!`);
-                            }
-                            break; // Path ends on Nexus hit
-                        }
-                        else if (hitUnit.type === 'pylon') {
-                            logMsgs.push(`HIT! ${ownerName}'s Pylon!`);
-                            newGameState.players[hitPlayerIndex].buildings[hitBuildingIndex].hp -= 1;
-                            hitUnit.hp -= 1;
-                            if (newGameState.players[hitPlayerIndex].buildings[hitBuildingIndex].hp <= 0) {
-                                logMsgs.push(`Pylon at (${r}, ${c}) destroyed!`);
-                                // Remove building
-                                newGameState.players[hitPlayerIndex].buildings.splice(hitBuildingIndex, 1);
-                            }
-                            break; // Path ends on Pylon hit
-                        }
-                        else if (hitUnit.type === 'mirror') {
-                            logMsgs.push(`HIT! ${ownerName}'s Mirror reflects the beam!`);
-                            newGameState.players[hitPlayerIndex].buildings[hitBuildingIndex].hp -= 1;
-                            hitUnit.hp -= 1;
-                            if (newGameState.players[hitPlayerIndex].buildings[hitBuildingIndex].hp <= 0) {
-                                logMsgs.push(`Mirror at (${r}, ${c}) destroyed!`);
-                                newGameState.players[hitPlayerIndex].buildings.splice(hitBuildingIndex, 1);
-                                // Path stops, mirror is destroyed
-                                break;
-                            }
-
-                            // Mirror reflects (Fixed logic)
-                            // Standard \ mirror
-                            if (dr === -1 && dc === -1) { [dr, dc] = [1, 1]; } // NW -> SE
-                            else if (dr === 1 && dc === 1) { [dr, dc] = [-1, -1]; } // SE -> NW
-                            else if (dr === -1 && dc === 1) { [dr, dc] = [1, -1]; } // NE -> SW
-                            else if (dr === 1 && dc === -1) { [dr, dc] = [-1, 1]; } // SW -> NE
-                            // Orthogonal reflection (flips 180)
-                            else if (dr === -1 && dc === 0) { [dr, dc] = [1, 0]; } // N -> S
-                            else if (dr === 1 && dc === 0) { [dr, dc] = [-1, 0]; } // S -> N
-                            else if (dr === 0 && dc === -1) { [dr, dc] = [0, 1]; } // W -> E
-                            else if (dr === 0 && dc === 1) { [dr, dc] = [0, -1]; } // E -> W
-
-                            direction = [dr, dc]; // Update direction
-                            logMsgs.push(`Beam reflects...`);
-                            continue; // Continue path
-                        }
-                    }
-                } // --- End of for loop ---
-
-            } catch (error) {
-                // 4. If anything in the loop fails, log it and add a game message
-                console.error("!!! CRITICAL: Laser trace simulation failed!", error);
-                logMsgs.push("A fatal error occurred! The laser dissipated.");
-                // The 'finally' block will still run, returning the partially
-                // completed path and logs, which is safe.
-                
-            } finally {
-                // 5. This block ALWAYS runs, guaranteeing a valid return object.
-                // This prevents the "Could not process attack" error.
-                
-                // If the game state failed to copy, return the original
-                // to prevent downstream crashes.
-                if (!newGameState) {
-                    newGameState = gameState;
+                    if (hitUnit) break;
                 }
                 
-                return { path, hits, logMsgs, finalGameState: newGameState };
-            }
-        }
-        
-        function animateLaser(path, attackerIndex) {
-            // Guard clause to prevent crash if attackerIndex is null or invalid
-            if (attackerIndex === null || attackerIndex === undefined || attackerIndex < 0 || !currentGame.players[attackerIndex]) {
-                return; 
+                // 3. Process Hit
+                if (hitUnit) {
+                    hits.push(hitUnit);
+                    hitUnit.hp--;
+                    const ownerName = players[hitOwnerIndex].displayName;
+
+                    if (hitUnit.type === 'nexus') {
+                        logMsgs.push(`HIT! ${ownerName}'s Nexus takes 1 damage!`);
+                        if (hitUnit.nexusHP <= 0) {
+                            logMsgs.push(`${ownerName}'s Nexus DESTROYED!`);
+                            newGameState.status = 'gameOver';
+                            newGameState.winner = playerIndex;
+                        }
+                        break; // Path stops at Nexus
+                    } 
+                    else if (hitUnit.type === 'pylon') {
+                        logMsgs.push(`HIT! ${ownerName}'s Pylon hit!`);
+                        if (hitUnit.hp <= 0) {
+                            logMsgs.push(`Pylon at (${r},${c}) destroyed!`);
+                            players[hitOwnerIndex].buildings = players[hitOwnerIndex].buildings.filter(
+                                b => !(b.location[0] === r && b.location[1] === c)
+                            );
+                        }
+                        break; // Path stops at Pylon
+                    }
+                    else if (hitUnit.type === 'mirror') {
+                        logMsgs.push(`HIT! ${ownerName}'s Mirror reflects the beam!`);
+                        if (hitUnit.hp <= 0) {
+                            logMsgs.push(`Mirror at (${r},${c}) destroyed!`);
+                             players[hitOwnerIndex].buildings = players[hitOwnerIndex].buildings.filter(
+                                b => !(b.location[0] === r && b.location[1] === c)
+                            );
+                            // Path stops, mirror is destroyed
+                            break;
+                        }
+                        
+                        // Mirror reflects (Fixed logic)
+                        // Implements NE (-1, 1) -> SE (1, 1) and E (0, 1) -> W (0, -1)
+                        if (dx === 0) { // E or W
+                            dy = -dy; // Flip horizontal
+                        } else { // N, S, or diagonal
+                            dx = -dx; // Flip vertical
+                        }
+                        direction = [dx, dy]; // Update direction
+                        logMsgs.push(`Beam reflects...`);
+                        continue; // Continue path
+                    }
+                }
             }
             
+            return { path, hits, logMsgs, finalGameState: newGameState };
+        }
+
+        function animateLaser(path) {
             let i = 0;
             const interval = setInterval(() => {
                 if (i >= path.length) {
                     clearInterval(interval);
                     // Clear animation
-                    $$('.laser-path').forEach(c => {
-                        c.classList.remove('laser-path');
-                        c.style.removeProperty('--laser-color-1');
-                        c.style.removeProperty('--laser-color-2');
-                    });
+                    $$('.laser-path').forEach(c => c.classList.remove('laser-path'));
                     return;
                 }
                 const [r, c] = path[i];
                 const cell = $(`[data-r="${r}"][data-c="${c}"]`);
                 if (cell) {
-                    const playerColorName = currentGame.players[attackerIndex].color;
-                    const [color1, color2] = COLOR_MAP[playerColorName].laserColors;
-                    cell.style.setProperty('--laser-color-1', color1);
-                    cell.style.setProperty('--laser-color-2', color2);
                     cell.classList.add('laser-path');
                 }
                 i++;
             }, 50);
         }
 
+        // --- UI Helpers ---
+        function cancelCurrentAction() {
+            currentAction = null;
+            selectedUnitLocation = null;
+            // Re-enable setup button if we were in setup
+            if (currentGame && currentGame.phase === 'setup') {
+                confirmNexusBtn.disabled = true;
+            }
+            renderBoard(); // Re-render to clear highlights
+        }
+
+        function getUnitAt(r, c) {
+            if (!currentGame || !currentGame.players) return null;
+            for (let i = 0; i < currentGame.players.length; i++) {
+                const player = currentGame.players[i];
+                if (!player) continue; // Fix for player 2 not existing yet
+                if (player.nexusLocation && player.nexusLocation[0] === r && player.nexusLocation[1] === c) {
+                    return { type: 'nexus', hp: player.nexusHP, isMine: i === playerIndex, owner: i };
+                }
+                const building = player.buildings.find(b => b.location[0] === r && b.location[1] === c);
+                if (building) {
+                    return { ...building, isMine: i === playerIndex, owner: i };
+                }
+            }
+            return null;
+        }
+
+        function showError(message) {
+            // Non-blocking error
+            const errorEl = document.createElement('div');
+            errorEl.className = 'absolute top-5 right-5 bg-red-600 text-white p-3 rounded-lg shadow-lg z-50 animate-pulse';
+            errorEl.textContent = message;
+            document.body.appendChild(errorEl);
+            setTimeout(() => {
+                if (errorEl) errorEl.remove();
+            }, 3000);
+        }
+
+        function showModal(message, showNewGame = false) {
+            modalMessage.innerHTML = `<p>${message}</p>`;
+            newGameBtn.classList.toggle('hidden', !showNewGame);
+            modalView.classList.remove('hidden');
+        }
+
+        function closeModalandReset() {
+            modalView.classList.add('hidden');
+            if (unsubscribeGame) unsubscribeGame();
+            gameView.classList.add('hidden');
+            waitingRoomView.classList.add('hidden');
+            showView('lobby'); // Go back to main menu
+            currentGameId = null;
+            currentGame = null;
+            playerIndex = -1;
+        }
+
+        // --- UI View Management ---
+        function showView(viewName) {
+            [profileView, lobbyView, lobbyListView, createLobbyView, waitingRoomView, gameView, modalView].forEach(v => {
+                if (v && v !== modalView) { // Modal is an overlay, don't hide it
+                    v.classList.add('hidden');
+                }
+            });
+
+            switch (viewName) {
+                case 'profile':       if (profileView) profileView.classList.remove('hidden'); break;
+                case 'lobby':         if (lobbyView) lobbyView.classList.remove('hidden'); break;
+                case 'lobbyList':     if (lobbyListView) lobbyListView.classList.remove('hidden'); break;
+                case 'createLobby':   if (createLobbyView) createLobbyView.classList.remove('hidden'); break;
+                case 'waitingRoom':   if (waitingRoomView) waitingRoomView.classList.remove('hidden'); break;
+                case 'game':          if (gameView) gameView.classList.remove('hidden'); break;
+            }
+        }
+
+        function populateColorSelect(selectElement, defaultColor) {
+            selectElement.innerHTML = '';
+            AVAILABLE_COLORS.forEach(color => {
+                const option = document.createElement('option');
+                option.value = color;
+                option.textContent = color;
+                if (color === defaultColor) {
+                    option.selected = true;
+                }
+                selectElement.appendChild(option);
+            });
+        }
+
         // --- Event Listeners ---
-        window.addEventListener('load', () => {
-            showLoading(true);
-            initFirebase();
-        });
-
-        modalCloseBtn.addEventListener('click', () => modal.classList.add('hidden'));
-
+        window.addEventListener('load', initFirebase);
+        
         // Profile
         saveProfileBtn.addEventListener('click', saveUserProfile);
 
         // Main Menu
-        menuMultiplayerBtn.addEventListener('click', () => {
-            showView('#view-lobby-list');
-            listenForLobbies();
-            startPresenceSystem(); // Start presence when entering lobby
-        });
+        singlePlayerBtn.addEventListener('click', () => showError("Single player not yet implemented."));
+        multiPlayerBtn.addEventListener('click', showLobbyList);
 
         // Lobby List
-        lobbyBackBtn.addEventListener('click', () => {
-            if (unsubscribeLobbies) {
-                unsubscribeLobbies();
-                unsubscribeLobbies = null;
-            }
-            stopPresenceSystem(); // Stop presence when leaving lobby
-            showView('#view-main-menu');
-        });
-        lobbyCreateBtn.addEventListener('click', () => showView('#view-create-lobby'));
-        lobbyRefreshBtn.addEventListener('click', listenForLobbies);
-        lobbyListContainer.addEventListener('click', (e) => {
-            const joinBtn = e.target.closest('.join-lobby-btn');
-            if (joinBtn) {
-                if (unsubscribeLobbies) {
-                    unsubscribeLobbies();
-                    unsubscribeLobbies = null;
-                }
-                joinLobby(joinBtn.dataset.id);
-            }
-        });
+        refreshLobbiesBtn.addEventListener('click', refreshLobbies);
+        showCreateLobbyBtn.addEventListener('click', showCreateLobby);
+        backToMainMenuBtn.addEventListener('click', () => showView('lobby'));
 
         // Create Lobby
-        createLobbyCancelBtn.addEventListener('click', () => showView('#view-lobby-list'));
-        createLobbyConfirmBtn.addEventListener('click', createLobby);
-        
-        // Waiting Lobby
-        waitLobbyCancelBtn.addEventListener('click', () => {
-            if (currentGameId) {
-                cancelLobby(currentGameId);
-            }
-        });
+        createLobbyBtn.addEventListener('click', createLobby);
+        cancelCreateLobbyBtn.addEventListener('click', () => showView('lobbyList'));
 
-        // Game Controls
-        quitGameBtn.addEventListener('click', () => {
-            // Use a confirmation modal instead of window.confirm
-            showModal("Are you sure you want to forfeit and quit the game?", false);
-            // Re-purpose the modal button for confirmation
-            modalCloseBtn.textContent = "Cancel";
-            
-            // Check if confirm button already exists
-            let confirmBtn = $('#modal-confirm-quit');
-            if (!confirmBtn) {
-                confirmBtn = document.createElement('button');
-                confirmBtn.id = 'modal-confirm-quit';
-                confirmBtn.className = "bg-red-600 hover:bg-red-500 text-white font-bold py-2 px-6 rounded-lg transition-all ml-4";
-                confirmBtn.textContent = "Forfeit";
-                modalCloseBtn.parentNode.appendChild(confirmBtn);
-            }
-            
-            // Add one-time listener for the new confirm button
-            confirmBtn.onclick = () => {
-                quitGame();
-                modal.classList.add('hidden');
-                // Restore modal button
-                modalCloseBtn.textContent = "OK";
-                confirmBtn.remove();
-                // Re-attach default listener
-                modalCloseBtn.onclick = () => modal.classList.add('hidden');
-            };
-            
-            // Make sure original close button just closes it
-            modalCloseBtn.onclick = () => {
-                 modal.classList.add('hidden');
-                 modalCloseBtn.textContent = "OK";
-                 confirmBtn.remove();
-                 // Re-attach default listener
-                 modalCloseBtn.onclick = () => modal.classList.add('hidden');
-            };
-        });
+        // Waiting Room
+        startGameBtn.addEventListener('click', startGame);
+        leaveLobbyBtn.addEventListener('click', leaveLobby);
         
-        // Setup
-        confirmNexusBtn.addEventListener('click', confirmNexusPlacement);
-        bottomNextPhaseBtn.addEventListener('click', () => {
-            if (currentGame.phase === 'setup') {
-                confirmNexusPlacement();
-            } else if (currentGame.phase === 'buyMove') {
-                endBuyMovePhase();
-            }
-        });
-
-        // Buy/Move
+        // Game
+        gameBoard.addEventListener('click', handleBoardClick);
+        newGameBtn.addEventListener('click', closeModalandReset);
+        
+        // Buy/Move Controls
         placePylonBtn.addEventListener('click', () => { currentAction = 'place-pylon'; renderBoard(); });
         placeMirrorBtn.addEventListener('click', () => { currentAction = 'place-mirror'; renderBoard(); });
         moveNexusBtn.addEventListener('click', () => { currentAction = 'move-nexus-select'; renderBoard(); });
-        undoActionBtn.addEventListener('click', undoLastAction);
+        cancelActionBtn.addEventListener('click', cancelCurrentAction);
         endPhaseBtn.addEventListener('click', endBuyMovePhase);
+        bottomNextPhaseBtn.addEventListener('click', endBuyMovePhase);
+        
+        // Setup Controls
+        confirmNexusBtn.addEventListener('click', confirmNexusPlacement);
 
-        // Attack
-        skipAttackBtn.addEventListener('click', skipAttack);
-        $$('.attack-dir-btn').forEach(btn => {
+        // Attack Controls
+        // --- FIX: Added event listeners ---
+        $$('#attack-controls button[data-dir]').forEach(btn => {
             btn.addEventListener('click', () => {
-                const dir = JSON.parse(btn.dataset.dir);
-                // Check restriction
-                const lastVec = currentGame.lastShotVector;
-                if (lastVec && dir[0] === -lastVec[0] && dir[1] === -lastVec[1]) {
-                    return showError("Cannot fire in the exact opposite direction of the last shot.");
+                const dir = btn.dataset.dir;
+                if (DIRECTIONS[dir]) {
+                    const [dx, dy] = DIRECTIONS[dir];
+                    handleAttack(dx, dy);
                 }
-                attackWithLaser(dir);
             });
         });
-        
+        skipAttackBtn.addEventListener('click', skipAttack);
+
     </script>
+
+    <!-- Custom Styles -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Use a more sci-fi mono font for headers */
+        .font-sci-mono {
+            font-family: 'Orbitron', 'Courier New', monospace; /* Fallback to monospace */
+        }
+        
+        /* Link a sci-fi font (optional, but nice) */
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Orbitron:wght@400;700&display=swap');
+
+        /* Board cell styling */
+        .cell {
+            box-shadow: inset 0 0 2px rgba(167, 139, 250, 0.2);
+        }
+        .shroud-wall {
+            background-image: repeating-linear-gradient(
+                45deg,
+                rgba(0, 0, 0, 0.1),
+                rgba(0, 0, 0, 0.1) 1px,
+                transparent 1px,
+                transparent 10px
+            );
+        }
+        
+        /* Unit styling */
+        .unit {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            opacity: 0.9;
+            filter: drop-shadow(0 0 8px currentColor);
+        }
+        .hp {
+            position: absolute;
+            bottom: 2px;
+            right: 4px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            color: white;
+            background-color: rgba(0,0,0,0.5);
+            padding: 0 3px;
+            border-radius: 2px;
+        }
+
+        /* Laser animation */
+        @keyframes laser-flash {
+            0%, 100% { background-color: rgba(255, 0, 0, 0.8); box-shadow: 0 0 10px 5px rgba(255, 0, 0, 0.7); }
+            50% { background-color: rgba(255, 100, 100, 0.8); box-shadow: 0 0 15px 8px rgba(255, 100, 100, 0.7); }
+        }
+        .laser-path {
+            animation: laser-flash 0.2s linear;
+            z-index: 10;
+        }
+
+        /* Custom scrollbar */
+        #game-log::-webkit-scrollbar,
+        #lobby-list-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        #game-log::-webkit-scrollbar-track,
+        #lobby-list-container::-webkit-scrollbar-track {
+            background: #2d3748; /* gray-800 */
+        }
+        #game-log::-webkit-scrollbar-thumb,
+        #lobby-list-container::-webkit-scrollbar-thumb {
+            background: #4a5568; /* gray-600 */
+            border-radius: 4px;
+        }
+        #game-log::-webkit-scrollbar-thumb:hover,
+        #lobby-list-container::-webkit-scrollbar-thumb:hover {
+            background: #718096; /* gray-500 */
+        }
+    </style>
+</head>
+
+<body class="bg-gray-900 text-gray-200 min-h-screen p-4 md:p-8 flex items-center justify-center">
+
+    <!-- Main Application Container -->
+    <div id="app" class="w-full max-w-7xl mx-auto">
+
+        <!-- Profile View (Hidden by default) -->
+        <div id="profile-view" class="hidden w-full max-w-md mx-auto p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
+            <h1 class="text-3xl font-bold text-center mb-6 font-sci-mono text-cyan-400">Welcome!</h1>
+            <p class="text-center text-gray-300 mb-4">Please create your profile to play.</p>
+            <div class="space-y-4">
+                <div>
+                    <label for="profile-display-name" class="block text-sm font-medium text-gray-400 mb-1">Display Name</label>
+                    <input id="profile-display-name" type="text" placeholder="Enter your name" class="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label for="profile-color-select" class="block text-sm font-medium text-gray-400 mb-1">Preferred Color</label>
+                    <select id="profile-color-select" class="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none">
+                        <!-- Colors populated by JS -->
+                    </select>
+                </div>
+                <button id="save-profile-btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg">
+                    Save Profile
+                </button>
+            </div>
+        </div>
+
+        <!-- Lobby View -->
+        <div id="lobby-view" class="hidden w-full max-w-md mx-auto p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
+            <h1 class="text-3xl font-bold text-center mb-6 font-sci-mono text-cyan-400">Zero-Sum Defense</h1>
+            <div class="mb-4 p-3 bg-gray-900 rounded-lg">
+                <p class="text-sm text-gray-400">Welcome,</p>
+                <p id="user-display-name-display" class="font-mono text-lg break-all">...</p>
+                <p class="text-xs text-gray-500 mt-1">User ID: <span id="user-id-display" class="font-mono break-all">Loading...</span></p>
+            </div>
+            <div class="space-y-4">
+                <button id="single-player-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg disabled:opacity-50" disabled>
+                    Singleplayer (Soon)
+                </button>
+                <button id="multi-player-btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg">
+                    Multiplayer
+                </button>
+            </div>
+        </div>
+        
+        <!-- Lobby List View -->
+        <div id="lobby-list-view" class="hidden w-full max-w-lg mx-auto p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
+            <h1 class="text-3xl font-bold text-center mb-6 font-sci-mono text-cyan-400">Open Lobbies</h1>
+            <div class="flex justify-between mb-4">
+                <button id="back-to-main-menu-btn" class="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg transition-all">&larr; Main Menu</button>
+                <button id="refresh-lobbies-btn" class="bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-2 px-4 rounded-lg transition-all">Refresh</button>
+            </div>
+            <div id="lobby-list-container" class="space-y-3 max-h-96 overflow-y-auto p-2 bg-gray-900/50 rounded-lg">
+                <!-- Lobbies populated by JS -->
+            </div>
+            <button id="show-create-lobby-btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg mt-6">
+                + Create New Lobby
+            </button>
+        </div>
+
+        <!-- Create Lobby View -->
+        <div id="create-lobby-view" class="hidden w-full max-w-md mx-auto p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
+            <h1 class="text-3xl font-bold text-center mb-6 font-sci-mono text-cyan-400">Create Lobby</h1>
+            <div class="space-y-4">
+                <div>
+                    <label for="lobby-name-input" class="block text-sm font-medium text-gray-400 mb-1">Lobby Name</label>
+                    <input id="lobby-name-input" type="text" class="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none">
+                </div>
+                <div>
+                    <label for="energy-pool-select" class="block text-sm font-medium text-gray-400 mb-1">Starting Energy</label>
+                    <select id="energy-pool-select" class="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none">
+                        <option value="10">Standard (10)</option>
+                        <option value="20">High (20)</option>
+                        <option value="5">Low (5)</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="host-color-select" class="block text-sm font-medium text-gray-400 mb-1">Your Color</label>
+                    <select id="host-color-select" class="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none">
+                        <!-- Colors populated by JS -->
+                    </select>
+                </div>
+                <div class="flex gap-4">
+                    <button id="cancel-create-lobby-btn" class="w-1/2 bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-lg transition-all shadow-lg">
+                        Cancel
+                    </button>
+                    <button id="create-lobby-btn" class="w-1/2 bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg">
+                        Create
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Waiting Room View -->
+        <div id="waiting-room-view" class="hidden w-full max-w-lg mx-auto p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
+            <h2 class="text-2xl font-bold text-center mb-2 font-sci-mono text-cyan-400">Waiting Room</h2>
+            <h3 id="waiting-lobby-name" class="text-xl text-center text-gray-300 mb-6">...</h3>
+            
+            <div class="grid grid-cols-2 gap-4 text-center mb-6">
+                <!-- Player 1 Box -->
+                <div class="p-4 bg-gray-900/50 rounded-lg">
+                    <p class="text-sm text-gray-400 mb-1">Player 1 (Host)</p>
+                    <p id="waiting-player1-name" class="text-lg font-bold">...</p>
+                    <div id="waiting-player1-color" class="p-2 rounded-lg border-2 mt-2">...</div>
+                </div>
+                <!-- Player 2 Box -->
+                <div class="p-4 bg-gray-900/50 rounded-lg">
+                    <p class="text-sm text-gray-400 mb-1">Player 2</p>
+                    <p id="waiting-player2-name" class="text-lg font-bold">...</p>
+                    <div id="waiting-player2-color" class="p-2 rounded-lg border-2 mt-2">...</div>
+                </div>
+            </div>
+            
+            <button id="start-game-btn" class="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-600 disabled:opacity-50 text-white font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg mb-3">
+                Start Game
+            </button>
+            <button id="leave-lobby-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg transition-all shadow-lg">
+                Leave Lobby
+            </button>
+        </div>
+
+
+        <!-- Game View -->
+        <div id="game-view" class="hidden w-full">
+            <!-- Header / Status Panel -->
+            <div class="mb-4 p-4 bg-gray-800/50 rounded-lg shadow-lg backdrop-blur-md border border-indigo-500/30 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 text-center">
+                <div class="font-sci-mono">
+                    <span class="text-xs text-gray-400 block">Game ID</span>
+                    <span id="game-id-display" class="text-sm break-all">...</span>
+                </div>
+                <div class="font-sci-mono">
+                    <span class="text-xs text-gray-400 block">You Are</span>
+                    <span id="player-number" class="text-lg font-bold">...</span>
+                </div>
+                <div class="font-sci-mono">
+                    <span class="text-xs text-gray-400 block">Current Turn</span>
+                    <span id="current-turn" class="text-lg font-bold">...</span>
+                </div>
+                <div class="font-sci-mono">
+                    <span class="text-xs text-gray-400 block">Phase</span>
+                    <span id="current-phase" class="text-lg font-bold">...</span>
+                </div>
+                <div class="font-sci-mono">
+                    <span class="text-xs text-gray-400 block">Energy Pool</span>
+                    <span id="energy-pool" class="text-lg font-bold text-cyan-400">10</span>
+                </div>
+                <div class="font-sci-mono">
+                    <span class="text-xs text-gray-400 block">Your Budget</span>
+                    <span id="player-budget" class="text-lg font-bold text-green-400">$0</span>
+                </div>
+            </div>
+
+            <!-- Main Content Area -->
+            <div class="flex flex-col lg:flex-row gap-4">
+                
+                <!-- Game Board -->
+                <div class="flex-grow">
+                    <div id="game-board" class="grid grid-cols-10 gap-1 bg-gray-900/50 p-2 rounded-lg border border-indigo-500/30">
+                        <!-- Cells generated by JS -->
+                    </div>
+                </div>
+
+                <!-- Controls & Log -->
+                <div class="w-full lg:w-80 xl:w-96 flex-shrink-0 flex flex-col gap-4">
+                    
+                    <!-- Control Panel -->
+                    <div id="control-panel" class="p-4 bg-gray-800/50 rounded-lg shadow-lg backdrop-blur-md border border-indigo-500/30">
+                        <h3 class="text-xl font-bold mb-4 text-center font-sci-mono text-cyan-400">CONTROLS</h3>
+                        
+                        <!-- Setup Controls -->
+                        <div id="setup-controls" class="hidden text-center">
+                            <p class="text-lg text-yellow-300 animate-pulse">Select a cell and confirm your Nexus location.</p>
+                            <button id="confirm-nexus-btn" class="w-full mt-4 bg-green-600 hover:bg-green-500 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg transition-all text-lg" disabled>
+                                Confirm Placement
+                            </button>
+                        </div>
+                        
+                        <!-- Setup Waiting Message -->
+                        <p id="setup-waiting-msg" class="hidden text-lg text-gray-400 animate-pulse text-center">
+                            Waiting for opponent to place Nexus...
+                        </p>
+
+                        <!-- Buy/Move Controls -->
+                        <div id="buy-move-controls" class="hidden space-y-3">
+                            <div class="grid grid-cols-2 gap-2">
+                                <button id="place-pylon-btn" class="w-full bg-cyan-700 hover:bg-cyan-600 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg transition-all">Pylon (1E)</button>
+                                <button id="place-mirror-btn" class="w-full bg-purple-700 hover:bg-purple-600 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg transition-all">Mirror (1E)</button>
+                            </div>
+                            <button id="move-nexus-btn" class="w-full bg-yellow-600 hover:bg-yellow-500 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg transition-all">Move Nexus</button>
+                            <button id="cancel-action-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold p-2 rounded-lg transition-all text-sm">Cancel Action</button>
+                            <hr class="border-gray-600 my-3">
+                            <button id="end-phase-btn" class="w-full bg-green-600 hover:bg-green-500 text-white font-bold p-3 rounded-lg transition-all text-lg">Ready to Attack</button>
+                        </div>
+
+                        <!-- Attack Controls -->
+                        <div id="attack-controls" class="hidden">
+                            <p class="text-center mb-3 text-lg text-red-400 animate-pulse">Select Attack Vector</p>
+                            <div class="grid grid-cols-3 gap-2 w-48 mx-auto">
+                                <button id="attack-nw-btn" data-dir="NW" class="aspect-square bg-red-800 hover:bg-red-700 disabled:bg-gray-600 rounded-lg font-bold transition-all">NW</button>
+                                <button id="attack-n-btn" data-dir="N" class="aspect-square bg-red-800 hover:bg-red-700 disabled:bg-gray-600 rounded-lg font-bold transition-all">N</button>
+                                <button id="attack-ne-btn" data-dir="NE" class="aspect-square bg-red-800 hover:bg-red-700 disabled:bg-gray-600 rounded-lg font-bold transition-all">NE</button>
+                                <button id="attack-w-btn" data-dir="W" class="aspect-square bg-red-800 hover:bg-red-700 disabled:bg-gray-600 rounded-lg font-bold transition-all">W</button>
+                                <div class="aspect-square flex items-center justify-center text-red-400"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.539 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.784.57-1.838-.196-1.539-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.783-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z" /></svg></div>
+                                <button id="attack-e-btn" data-dir="E" class="aspect-square bg-red-800 hover:bg-red-700 disabled:bg-gray-600 rounded-lg font-bold transition-all">E</button>
+                                <button id="attack-sw-btn" data-dir="SW" class="aspect-square bg-red-800 hover:bg-red-700 disabled:bg-gray-600 rounded-lg font-bold transition-all">SW</button>
+                                <button id="attack-s-btn" data-dir="S" class="aspect-square bg-red-800 hover:bg-red-700 disabled:bg-gray-600 rounded-lg font-bold transition-all">S</button>
+                                <button id="attack-se-btn" data-dir="SE" class="aspect-square bg-red-800 hover:bg-red-700 disabled:bg-gray-600 rounded-lg font-bold transition-all">SE</button>
+                            </div>
+                            <hr class="border-gray-600 my-3">
+                            <button id="skip-attack-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold p-3 rounded-lg transition-all text-lg">
+                                Skip Attack & End Turn
+                            </button>
+                        </div>
+
+                        <!-- Waiting Controls (New) -->
+                        <div id="waiting-controls" class="hidden text-center">
+                            <p class="text-lg text-gray-400 animate-pulse">Waiting for opponent...</p>
+                        </div>
+                    </div>
+
+                    <!-- Game Log -->
+                    <div class="flex-grow p-4 bg-gray-800/50 rounded-lg shadow-lg backdrop-blur-md border border-indigo-500/30 min-h-[200px] lg:min-h-0">
+                        <h3 class="text-xl font-bold mb-4 text-center font-sci-mono text-cyan-400">EVENT LOG</h3>
+                        <div id="game-log" class="h-48 lg:h-full lg:max-h-96 overflow-y-auto space-y-2 pr-2 font-mono">
+                            <!-- Log messages generated by JS -->
+                        </div>
+                    </div>
+
+                    <!-- New Phase Indicator (Below Log) -->
+                    <div class="p-4 bg-gray-800/50 rounded-lg shadow-lg backdrop-blur-md border border-indigo-500/30">
+                        <h3 class="text-lg font-bold mb-2 text-center font-sci-mono text-cyan-400">Current Phase</h3>
+                        <p id="bottom-phase-display" class="text-2xl font-bold text-center text-gray-300">...</p>
+                        <button id="bottom-next-phase-btn" class="hidden w-full mt-4 bg-green-600 hover:bg-green-500 text-white font-bold p-3 rounded-lg transition-all text-lg">
+                            Ready to Attack
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal View -->
+        <div id="modal-view" class="hidden fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div class="bg-gray-800 p-8 rounded-lg shadow-xl border border-indigo-500/50 max-w-lg w-full text-center">
+                <div id="modal-message" class="text-2xl mb-6">...</div>
+                <button id="new-game-btn" class="hidden bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded-lg text-lg transition-all">
+                    Back to Lobby
+                </button>
+            </div>
+        </div>
+
+    </div>
+
 </body>
 </html>
