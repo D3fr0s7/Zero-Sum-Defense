@@ -22,16 +22,17 @@
             BUILDING_HP: 1,
             COST: { PYLON: 1, MIRROR: 1 },
             NEXUS_RANGE: 3,
-            COLORS: ['Blue', 'Red', 'Green', 'Yellow', 'Purple', 'Orange', 'Pink', 'Cyan'],
+            COLORS: ['Red', 'Yellow', 'Blue', 'Green', 'Purple', 'Orange', 'Pink', 'Cyan'],
+            // ADDED 'text' property to map for the HUD
             COLOR_MAP: {
-                'Blue':   { bg: 'bg-blue-900/20',   stroke: 'stroke-cyan-400',   border: 'border-cyan-400'   },
-                'Red':    { bg: 'bg-red-900/20',    stroke: 'stroke-rose-400',   border: 'border-rose-400'   },
-                'Green':  { bg: 'bg-green-900/20',  stroke: 'stroke-green-400',  border: 'border-green-400'  },
-                'Yellow': { bg: 'bg-yellow-900/20', stroke: 'stroke-yellow-400', border: 'border-yellow-400' },
-                'Purple': { bg: 'bg-purple-900/20', stroke: 'stroke-purple-400', border: 'border-purple-400' },
-                'Orange': { bg: 'bg-orange-900/20', stroke: 'stroke-orange-400', border: 'border-orange-400' },
-                'Pink':   { bg: 'bg-pink-900/20',   stroke: 'stroke-pink-400',   border: 'border-pink-400'   },
-                'Cyan':   { bg: 'bg-cyan-900/20',   stroke: 'stroke-cyan-400',   border: 'border-cyan-400'   }
+                'Red':    { bg: 'bg-red-900/20',    stroke: 'stroke-rose-400',   border: 'border-rose-400',   text: 'text-rose-400' },
+                'Yellow': { bg: 'bg-yellow-900/20', stroke: 'stroke-yellow-400', border: 'border-yellow-400', text: 'text-yellow-400' },
+                'Blue':   { bg: 'bg-blue-900/20',   stroke: 'stroke-blue-400',   border: 'border-blue-400',   text: 'text-blue-400' },
+                'Green':  { bg: 'bg-green-900/20',  stroke: 'stroke-green-400',  border: 'border-green-400',  text: 'text-green-400' },
+                'Purple': { bg: 'bg-purple-900/20', stroke: 'stroke-purple-400', border: 'border-purple-400', text: 'text-purple-400' },
+                'Orange': { bg: 'bg-orange-900/20', stroke: 'stroke-orange-400', border: 'border-orange-400', text: 'text-orange-400' },
+                'Pink':   { bg: 'bg-pink-900/20',   stroke: 'stroke-pink-400',   border: 'border-pink-400',   text: 'text-pink-400' },
+                'Cyan':   { bg: 'bg-cyan-900/20',   stroke: 'stroke-cyan-400',   border: 'border-cyan-400',   text: 'text-cyan-400' }
             },
             DIRECTIONS: {
                 'N': [-1, 0], 'NE': [-1, 1], 'E': [0, 1], 'SE': [1, 1],
@@ -41,6 +42,16 @@
                 NEXUS: `<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>`,
                 PYLON: `<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L7 22h10L12 2z"></path></svg>`,
                 MIRROR: `<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="2" y1="22" x2="22" y2="2"></line></svg>`
+            },
+            LASER_COLORS: {
+                'Red':    '#ff0000',
+                'Yellow': '#eab308',
+                'Blue':   '#0000ff',
+                'Green':  '#00ff00',
+                'Purple': '#be00ff',
+                'Orange': '#ff7f00',
+                'Pink':   '#ff00bf',
+                'Cyan':   '#00ffff'
             },
             APP_ID: typeof __app_id !== 'undefined' ? __app_id : 'default-app-id'
         };
@@ -145,7 +156,7 @@
             traceLaser: (startLoc, direction, gameData) => {
                 let [r, c] = startLoc;
                 let [dx, dy] = direction;
-                let path = [[r, c]];
+                let path = [];
                 let hits = [];
                 let log = [];
                 
@@ -159,14 +170,32 @@
                     // 1. Wall Check
                     const rOut = r < 0 || r >= CONSTANTS.BOARD_ROWS;
                     const cOut = c < 0 || c >= CONSTANTS.BOARD_COLS;
-                    if (rOut || cOut) {
-                        log.push("Laser reflected off boundary.");
+
+                    // STOP if hitting Back Walls (Left/Right columns)
+                    if (cOut) {
+                        log.push("Laser escaped the system (Miss).");
+                        break; 
+                    }
+
+                    // REFLECT if hitting Side Walls (Top/Bottom rows)
+                    if (rOut) {
+                        log.push("Laser reflected off side boundary.");
+                        
                         const [prevR, prevC] = path[path.length - 2];
-                        r = prevR; c = prevC; // Step back
-                        if (rOut) dx = -dx;
-                        if (cOut) dy = -dy;
+                        
+                        r = prevR;
+                        c = prevC + dy;
+                        
+                        path[path.length - 1] = [r, c]; 
+
+                        const cOut = c < 0 || c >= CONSTANTS.BOARD_COLS;
+                        if (cOut) {
+                            log.push("Laser reflected into a corner and escaped (Miss).");
+                            break; 
+                        }
+
+                        dx = -dx; 
                         direction = [dx, dy];
-                        continue;
                     }
 
                     // 2. Unit Check
@@ -369,18 +398,39 @@
                     DOM.gameId.textContent = id;
                     
                     State.subs.game = onSnapshot(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', id), (snap) => {
-                        if(!snap.exists()) { API.game.stopListening(); UIManager.showModal("Game Deleted", false); return; }
+                        // 1. Handle Lobby Deletion (Host left or Game deleted)
+                        if(!snap.exists()) { 
+                            API.game.stopListening(); 
+                            UIManager.showModal("Lobby Closed", false); 
+                            UIManager.show('lobbyList'); // Ensure we go back to list
+                            return; 
+                        }
                         
                         const newData = snap.data();
 
+                        // --- KICK DETECTION & HANDLING ---
+                        // Check if we are still in the players list
+                        const amIStillInGame = newData.players.some(p => p.userId === State.currentUser.uid);
+                        
+                        // If the document exists, but we aren't in it, we were kicked.
+                        if (!amIStillInGame) {
+                            API.game.stopListening(); // Clean up local listeners/presence
+                            UIManager.toast("You have been kicked by the host.");
+                            UIManager.show('lobbyList'); // Send back to menu
+                            return; // Stop processing this update
+                        }
+                        // ----------------------------------
+
                         // === NEW ANIMATION TRIGGER ===
-                        // If we have a path, and the Attack ID is different from the one we currently have saved...
                         if (newData.lastLaserPath && newData.lastAttackId && 
-                           (newData.lastAttackId !== State.game?.lastAttackId)) {
+                        (newData.lastAttackId !== State.game?.lastAttackId)) {
                             
-                            // Parse the string back into an array
                             const pathArray = JSON.parse(newData.lastLaserPath);
-                            UIManager.animateLaser(pathArray);
+                            const shooterIndex = (newData.turn + 1) % 2;
+                            // Safe check in case a player left mid-shot calculation (rare edge case)
+                            const shooterColor = newData.players[shooterIndex] ? newData.players[shooterIndex].color : 'Red';
+
+                            UIManager.animateLaser(pathArray, shooterColor);
                         }
                         // =============================
 
@@ -410,8 +460,30 @@
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), { players: newP });
                 },
                 startGame: async () => {
+                    // 1. Deep Reset of Players (keep ID/Name/Color/Ready, wipe board data)
+                    const resetPlayers = State.game.players.map(p => ({
+                        userId: p.userId,
+                        displayName: p.displayName,
+                        color: p.color,
+                        isReady: p.isReady, // Keep ready state or reset? usually keep until game actually inits
+                        nexusLocation: null,
+                        nexusStartLoc: null,
+                        nexusHP: CONSTANTS.NEXUS_HP,
+                        buildings: []
+                    }));
+
+                    // 2. Push Full Reset Update
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                        status: 'inProgress', phase: 'setup', turn: 0, log: [...State.game.log, "Game Started! Setup Phase."]
+                        status: 'inProgress', 
+                        phase: 'setup', 
+                        turn: 0, 
+                        energyPool: State.game.maxEnergy,
+                        pendingEnergyRefund: 0,
+                        lastShotVector: null,
+                        lastLaserPath: null,
+                        lastAttackId: null,
+                        players: resetPlayers,
+                        log: [`Game Started! State Reset.`]
                     });
                 },
                 placeNexus: async (loc) => {
@@ -529,6 +601,41 @@
                         players: newP,
                         log: [...State.game.log, "Attack Skipped."]
                     });
+                },
+
+                updateSettings: async (newName, newEnergy) => {
+                    if (State.playerIndex !== 0) return; // Host only
+
+                    const newP = JSON.parse(JSON.stringify(State.game.players));
+                    let newLogs = [...State.game.log];
+
+                    if (newP[1]) {
+                        newP[1].isReady = false; // Un-ready the guest
+                        newLogs.push("Host changed settings. Guest un-readied.");
+                    } else {
+                        newLogs.push("Host changed settings.");
+                    }
+
+                    await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+                        lobbyName: newName,
+                        maxEnergy: parseInt(newEnergy),
+                        energyPool: parseInt(newEnergy), // Also update the pool to match
+                        players: newP,
+                        log: newLogs
+                    });
+                },
+
+                kickGuest: async () => {
+                    if (State.playerIndex !== 0 || State.game.players.length < 2) return; // Host only
+
+                    const hostPlayer = State.game.players[0];
+                    hostPlayer.isReady = false; // Reset host ready state
+
+                    await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+                        players: [hostPlayer], // Set players array to only host
+                        status: 'waitingForOpponent',
+                        log: [...State.game.log, `${State.game.players[1].displayName} was kicked by the host.`]
+                    });
                 }
             }
         };
@@ -592,55 +699,126 @@
             
             renderWaitingRoom: () => {
                 const g = State.game;
-                DOM.$('#waiting-lobby-name').textContent = g.lobbyName;
                 const p1 = g.players[0];
                 const p2 = g.players[1];
                 const isHost = State.playerIndex === 0;
+
+                // === Host Settings Panel ===
+                const hostPanel = DOM.$('#host-settings-panel');
+                const lobbyNameInput = DOM.$('#waiting-lobby-name-input');
+                const energySelect = DOM.$('#waiting-energy-pool-select');
+
+                if (isHost) {
+                    hostPanel.classList.remove('hidden');
+                    lobbyNameInput.disabled = false;
+                    energySelect.disabled = false;
+                    
+                    lobbyNameInput.value = g.lobbyName;
+                    energySelect.value = g.maxEnergy;
+
+                    // Add event listeners that update settings and un-ready P2
+                    lobbyNameInput.onchange = (e) => {
+                        API.game.updateSettings(e.target.value, energySelect.value);
+                    };
+                    energySelect.onchange = (e) => {
+                        API.game.updateSettings(lobbyNameInput.value, e.target.value);
+                    };
+
+                } else {
+                    // Guest just sees the panel, but disabled
+                    hostPanel.classList.remove('hidden');
+                    lobbyNameInput.value = g.lobbyName;
+                    energySelect.value = g.maxEnergy;
+                    lobbyNameInput.disabled = true;
+                    energySelect.disabled = true;
+                }
+
+                // This text display is now redundant, but we'll update it anyway
+                DOM.$('#waiting-lobby-name').textContent = g.lobbyName;
 
                 // Helper to render player box
                 const renderBox = (p, prefix, isMe) => {
                     const nameEl = DOM.$(`#${prefix}-name`);
                     const rInd = DOM.$(`#${prefix}-ready-indicator`);
-                    const rBtn = DOM.$(`#${prefix}-ready-btn`);
                     const sel = DOM.$(`#${prefix}-color-select`);
                     
+                    // Find kick button (only used for p2)
+                    const kickBtn = DOM.$('#kick-p2-btn');
+                    
+                    // Hiding the old small buttons, we use the big main button now
+                    DOM.$(`#${prefix}-ready-btn`).classList.add('hidden');
+
                     if(!p) {
                         nameEl.textContent = "Empty"; 
-                        rInd.classList.add('hidden'); rBtn.classList.add('hidden'); sel.classList.add('hidden');
+                        nameEl.classList.add('text-gray-500');
+                        rInd.classList.add('hidden'); 
+                        sel.classList.add('hidden');
+                        if (prefix === 'p2') kickBtn.classList.add('hidden'); // Hide kick button if no P2
                         return;
                     }
+
                     nameEl.textContent = p.displayName + (isMe ? " (You)" : "");
-                    rInd.classList.remove('hidden');
-                    rInd.textContent = p.isReady ? "READY" : "NOT READY";
-                    rInd.className = p.isReady ? "mt-2 text-xs font-bold text-green-500" : "mt-2 text-xs font-bold text-red-500";
+                    nameEl.classList.remove('text-gray-500');
+                    
+                    // Host is always "Ready" implicitly, so we only care about Guest readiness visually
+                    if (prefix === 'p1') {
+                        rInd.textContent = "HOST";
+                        rInd.className = "mt-2 text-xs font-bold text-cyan-500 uppercase tracking-widest";
+                    } else {
+                        rInd.classList.remove('hidden');
+                        rInd.textContent = p.isReady ? "READY" : "NOT READY";
+                        rInd.className = p.isReady ? "mt-2 text-xs font-bold text-green-500 uppercase tracking-widest" : "mt-2 text-xs font-bold text-red-500 uppercase tracking-widest";
+
+                        // Show/bind kick button
+                        if (isHost) {
+                            kickBtn.classList.remove('hidden');
+                            kickBtn.onclick = API.game.kickGuest;
+                        } else {
+                            kickBtn.classList.add('hidden');
+                        }
+                    }
                     
                     sel.classList.remove('hidden');
                     if (sel.options.length === 0) UIManager.populateColors(sel);
                     sel.value = p.color;
                     sel.disabled = !isMe;
                     if(isMe) {
-                        rBtn.classList.remove('hidden');
                         sel.onchange = async (e) => {
                             const newP = [...State.game.players];
                             newP[State.playerIndex].color = e.target.value;
+                            // Changing color shouldn't un-ready anyone, so just update players
                             await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), { players: newP });
                         };
-                    } else {
-                        rBtn.classList.add('hidden');
                     }
                 };
                 
                 renderBox(p1, 'p1', State.playerIndex === 0);
                 renderBox(p2, 'p2', State.playerIndex === 1);
                 
-                const startBtn = DOM.$('#start-game-btn');
+                // Main Button Logic
+                const mainBtn = DOM.$('#start-game-btn');
+                
                 if(isHost) {
-                    startBtn.disabled = !(p1.isReady && (p2 ? p2.isReady : true));
-                    startBtn.textContent = "Start Game";
-                    startBtn.onclick = API.game.startGame;
+                    // Host Logic: Start Game
+                    const p2Ready = p2 && p2.isReady;
+                    mainBtn.textContent = p2Ready ? "Start Game" : (p2 ? "Waiting for Guest..." : "Waiting for Player...");
+                    mainBtn.disabled = !p2Ready;
+                    mainBtn.onclick = API.game.startGame;
+                    
+                    // Styling: Green if ready, Gray if not
+                    mainBtn.className = `w-full font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg mb-3 ${p2Ready ? 'bg-green-600 hover:bg-green-500 text-white cursor-pointer' : 'bg-gray-700 text-gray-400 cursor-not-allowed opacity-75'}`;
+                } else if (State.playerIndex === 1) { // Check if guest
+                    // Guest Logic: Toggle Ready
+                    const amIReady = g.players[State.playerIndex].isReady;
+                    mainBtn.textContent = amIReady ? "Cancel Ready" : "Ready Up";
+                    mainBtn.disabled = false;
+                    mainBtn.onclick = API.game.toggleReady;
+
+                    // Styling: Yellow if ready (to cancel), Green if not ready
+                    mainBtn.className = `w-full font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg mb-3 cursor-pointer ${amIReady ? 'bg-yellow-600 hover:bg-yellow-500 text-white' : 'bg-green-600 hover:bg-green-500 text-white'}`;
                 } else {
-                    startBtn.textContent = "Waiting for Host...";
-                    startBtn.disabled = true;
+                    // Spectator/Error state?
+                    mainBtn.classList.add('hidden');
                 }
             },
             
@@ -650,20 +828,37 @@
                 if(!myP) return; 
                 
                 const turnP = g.players[g.turn];
-                DOM.playerNum.textContent = `P${State.playerIndex+1}`;
-                DOM.turn.textContent = `P${g.turn+1} (${turnP.displayName})`;
+                
+                // SAFE COLOR LOOKUP: Defaults to 'text-white' if color map fails
+                const getTextColor = (colorName) => {
+                    const c = CONSTANTS.COLOR_MAP[colorName];
+                    return (c && c.text) ? c.text : 'text-white';
+                };
+
+                const myColorClass = getTextColor(myP.color);
+                const turnColorClass = getTextColor(turnP.color);
+
+                // Update HUD
+                DOM.playerNum.innerHTML = `<span class="${myColorClass}">${myP.displayName}</span>`;
+                DOM.turn.innerHTML = `<span class="${turnColorClass}">${turnP.displayName}</span>`;
+                
                 DOM.phase.textContent = g.phase;
                 DOM.energy.textContent = g.energyPool;
                 
                 // Calc Budget
-                const myPylons = myP.buildings.filter(b => b.type === 'pylon').length;
+                const myPylons = myP.buildings ? myP.buildings.filter(b => b.type === 'pylon').length : 0;
                 const budget = (g.turn === State.playerIndex && g.phase === 'buyMove') ? (1 + myPylons) : 0;
                 DOM.budget.textContent = budget;
                 
+                // Render sub-components
                 UIManager.renderBoard();
                 UIManager.renderControls(budget);
-                DOM.gameLog.innerHTML = g.log.map(l => `<div class="border-b border-gray-700 py-1">${l}</div>`).join('');
-                DOM.gameLog.scrollTop = DOM.gameLog.scrollHeight;
+                
+                // Render Log
+                if(DOM.gameLog && g.log) {
+                    DOM.gameLog.innerHTML = g.log.map(l => `<div class="border-b border-gray-700 py-1">${l}</div>`).join('');
+                    DOM.gameLog.scrollTop = DOM.gameLog.scrollHeight;
+                }
 
                 if(g.status === 'gameOver') UIManager.showModal(`Game Over! Winner: ${g.players[g.winner].displayName}`, true);
             },
@@ -713,41 +908,152 @@
             renderControls: (budget) => {
                 const g = State.game;
                 const isMyTurn = g.turn === State.playerIndex;
-                const controls = { setup: DOM.$('#setup-controls'), buy: DOM.$('#buy-move-controls'), attack: DOM.$('#attack-controls'), waiting: DOM.$('#waiting-controls') };
-                Object.values(controls).forEach(el => el.classList.add('hidden'));
+                const controls = { 
+                    setup: DOM.$('#setup-controls'), 
+                    buy: DOM.$('#buy-move-controls'), 
+                    attack: DOM.$('#attack-controls'), 
+                    waiting: DOM.$('#waiting-controls') 
+                };
                 
+                // 1. Reset: Hide all control panels
+                Object.values(controls).forEach(el => {
+                    if(el) el.classList.add('hidden');
+                });
+
+                // 2. Safely hide the old waiting message if it still exists in DOM
+                const oldMsg = DOM.$('#setup-waiting-msg');
+                if (oldMsg) oldMsg.classList.add('hidden');
+
+                // 3. Show relevant controls
                 if(g.phase === 'setup') {
                     if(!g.players[State.playerIndex].nexusLocation) {
-                        controls.setup.classList.remove('hidden');
+                        if(controls.setup) controls.setup.classList.remove('hidden');
                         State.currentAction = 'setup';
+                        
                         const btn = DOM.$('#confirm-nexus-btn');
-                        btn.disabled = !State.selectedLocation;
-                        btn.textContent = State.selectedLocation ? "Confirm Location" : "Select Cell";
-                        btn.onclick = () => API.game.placeNexus(State.selectedLocation);
+                        if(btn) {
+                            btn.disabled = !State.selectedLocation;
+                            btn.textContent = State.selectedLocation ? "Confirm Location" : "Select Cell";
+                            btn.onclick = () => API.game.placeNexus(State.selectedLocation);
+                        }
                     } else {
-                        DOM.$('#setup-waiting-msg').classList.remove('hidden');
+                        if(controls.waiting) controls.waiting.classList.remove('hidden');
                     }
                 }
-                else if (!isMyTurn) { controls.waiting.classList.remove('hidden'); }
+                else if (!isMyTurn) { 
+                    if(controls.waiting) controls.waiting.classList.remove('hidden'); 
+                }
                 else if (g.phase === 'buyMove') {
-                    controls.buy.classList.remove('hidden');
-                    DOM.$('#place-pylon-btn').disabled = (budget < 1 || g.energyPool < 1);
-                    DOM.$('#place-mirror-btn').disabled = (budget < 1 || g.energyPool < 1);
+                    if(controls.buy) controls.buy.classList.remove('hidden');
+                    const btnPylon = DOM.$('#place-pylon-btn');
+                    const btnMirror = DOM.$('#place-mirror-btn');
+                    if(btnPylon) btnPylon.disabled = (budget < 1 || g.energyPool < 1);
+                    if(btnMirror) btnMirror.disabled = (budget < 1 || g.energyPool < 1);
                 }
                 else if (g.phase === 'attack') {
-                    controls.attack.classList.remove('hidden');
+                    if(controls.attack) controls.attack.classList.remove('hidden');
                 }
             },
             
-            animateLaser: (path) => {
+            animateLaser: (path, colorName) => {
+                // Get Hex from constants, default to Red
+                const hex = CONSTANTS.LASER_COLORS[colorName] || '#ff0000';
+
+                // Clean up any old laser beams immediately before starting a new one
+                DOM.$$('.laser-beam-svg').forEach(el => el.remove());
+                DOM.$$('.laser-active').forEach(el => el.classList.remove('laser-active'));
+
                 let i = 0;
                 const interval = setInterval(() => {
-                    if(i >= path.length) { clearInterval(interval); DOM.$$('.laser-path').forEach(e=>e.classList.remove('laser-path')); return; }
-                    const [r,c] = path[i];
+                    if(i >= path.length) { 
+                        clearInterval(interval); 
+                        // Optional: Auto-remove beams after a delay, or let CSS fade handle it
+                        setTimeout(() => {
+                             DOM.$$('.laser-beam-svg').forEach(el => el.remove());
+                             DOM.$$('.laser-active').forEach(el => el.classList.remove('laser-active'));
+                        }, 2000);
+                        return; 
+                    }
+
+                    const [r, c] = path[i];
                     const cell = DOM.$(`[data-r="${r}"][data-c="${c}"]`);
-                    if(cell) { cell.classList.add('bg-red-500', 'shadow-[0_0_10px_red]', 'laser-path'); }
+
+                    if(cell) { 
+                        // 1. Calculate Direction (Delta)
+                        let dr = 0, dc = 0;
+                        const next = path[i+1];
+                        const prev = path[i-1];
+
+                        if (prev) {
+                            // --- Calculate INCOMING vector ---
+                            const dr_in = r - prev[0];
+                            const dc_in = c - prev[1];
+
+                            // --- Set default vector (use incoming) ---
+                            dr = dr_in;
+                            dc = dc_in;
+
+                            if (next) {
+                                // --- Calculate OUTGOING vector ---
+                                const dr_out = next[0] - r;
+                                const dc_out = next[1] - c;
+
+                                // --- CORNER LOGIC ---
+                                // Check if incoming was Straight (H or V)
+                                const isIncomingStraight = (dr_in === 0 || dc_in === 0);
+                                // Check if outgoing is Diagonal
+                                const isOutgoingDiagonal = (dr_out !== 0 && dc_out !== 0);
+
+                                if (isIncomingStraight && isOutgoingDiagonal) {
+                                    // This is the "skid" cell turning into a diagonal.
+                                    // Override the vector to use the OUTGOING one.
+                                    dr = dr_out;
+                                    dc = dc_out;
+                                }
+                            }
+                            // (else, it's the end of the line, default (dr_in, dc_in) is correct)
+                        } else if (next) { 
+                            // Start of line: Calculate based on where we are going
+                            dr = next[0] - r;
+                            dc = next[1] - c;
+                        }
+
+                        // 2. Determine Line Coordinates based on Delta
+                        // Default to Center-Center (dot) if no movement
+                        let x1 = "50%", y1 = "50%", x2 = "50%", y2 = "50%";
+
+                        if (dr === 0 && dc !== 0) { 
+                            // Horizontal (-)
+                            x1 = "0%"; y1 = "50%"; x2 = "100%"; y2 = "50%";
+                        } else if (dr !== 0 && dc === 0) { 
+                            // Vertical (|)
+                            x1 = "50%"; y1 = "0%"; x2 = "50%"; y2 = "100%";
+                        } else if ((dr === 1 && dc === 1) || (dr === -1 && dc === -1)) { 
+                            // Diagonal Main (\) (NW to SE or SE to NW)
+                            x1 = "0%"; y1 = "0%"; x2 = "100%"; y2 = "100%";
+                        } else if ((dr === 1 && dc === -1) || (dr === -1 && dc === 1)) { 
+                            // Diagonal Anti (/) (NE to SW or SW to NE)
+                            x1 = "100%"; y1 = "0%"; x2 = "0%"; y2 = "100%";
+                        }
+
+                        // 3. Set CSS Var for color (used by CSS animations)
+                        cell.style.setProperty('--laser-color', hex);
+
+                        // 4. Inject SVG Line
+                        const svg = document.createElement('div');
+                        svg.className = 'laser-beam-svg';
+                        svg.innerHTML = `<svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+                            <line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${hex}" stroke-width="15" stroke-linecap="round" />
+                        </svg>`;
+                        cell.appendChild(svg);
+
+                        // 5. Trigger Background Pulse
+                        cell.classList.remove('laser-active'); // reset if needed
+                        void cell.offsetWidth; // force reflow
+                        cell.classList.add('laser-active'); 
+                    }
                     i++;
-                }, 50);
+                }, 30); // Slightly faster speed (30ms) for a snappier beam
             }
         };
 
@@ -757,7 +1063,12 @@
         const Handlers = {
             init: () => {
                 DOM.$('#save-profile-btn').onclick = () => API.saveProfile(DOM.$('#profile-display-name').value, DOM.$('#profile-color-select').value);
-                DOM.$('#multi-player-btn').onclick = () => { UIManager.show('lobbyList'); API.presence.start(); API.lobby.create("Test", 10, 'Red'); }; // Just trigger refresh basically
+                DOM.$('#multi-player-btn').onclick = () => {
+                    UIManager.show('lobbyList');
+                    API.presence.start();
+                    // Instead of creating a test lobby, we now just refresh the list
+                    DOM.$('#refresh-lobbies-btn').click();
+                };
                 DOM.$('#refresh-lobbies-btn').onclick = async () => {
                     DOM.lobbyListContainer.innerHTML = "Cleaning & Loading...";
                     
@@ -795,10 +1106,12 @@
                         DOM.lobbyListContainer.innerHTML = "<div class='text-gray-500 text-center mt-4'>No active lobbies found.</div>";
                     }
                 };
-                DOM.$('#show-create-lobby-btn').onclick = () => { 
-                    UIManager.populateColors(DOM.$('#host-color-select'));
-                    DOM.$('#lobby-name-input').value = `${State.currentUser.profile.displayName}'s Game`;
-                    UIManager.show('createLobby'); 
+                DOM.$('#show-create-lobby-btn').onclick = () => {
+                    const defaultName = `${State.currentUser.profile.displayName}'s Game`;
+                    const defaultEnergy = 10;
+                    const defaultColor = State.currentUser.profile.preferredColor;
+                    
+                    API.lobby.create(defaultName, defaultEnergy, defaultColor);
                 };
                 DOM.$('#create-lobby-btn').onclick = () => API.lobby.create(DOM.$('#lobby-name-input').value, DOM.$('#energy-pool-select').value, DOM.$('#host-color-select').value);
                 DOM.$('#cancel-create-lobby-btn').onclick = () => UIManager.show('lobbyList');
@@ -906,13 +1219,31 @@
         }
 
         /* Laser animation */
-        @keyframes laser-flash {
-            0%, 100% { background-color: rgba(255, 0, 0, 0.8); box-shadow: 0 0 10px 5px rgba(255, 0, 0, 0.7); }
-            50% { background-color: rgba(255, 100, 100, 0.8); box-shadow: 0 0 15px 8px rgba(255, 100, 100, 0.7); }
+        /* The background pulse for the cell */
+        @keyframes laser-pulse {
+            0% { background-color: var(--laser-color); box-shadow: inset 0 0 20px var(--laser-color); }
+            100% { background-color: transparent; box-shadow: none; }
         }
-        .laser-path {
-            animation: laser-flash 0.2s linear;
-            z-index: 10;
+
+        /* The SVG Line itself fading out */
+        @keyframes beam-fade {
+            0% { opacity: 1; }
+            80% { opacity: 1; } /* Stay visible for a bit */
+            100% { opacity: 0; }
+        }
+
+        .laser-active {
+            /* Background pulse */
+            animation: laser-pulse 1s ease-out forwards;
+        }
+
+        .laser-beam-svg {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 20;
+            filter: drop-shadow(0 0 4px var(--laser-color)); /* Glow effect on the line */
+            animation: beam-fade 1.5s ease-out forwards;
         }
 
         /* Custom scrollbar */
@@ -1007,6 +1338,22 @@
 
         <div id="waiting-room-view" class="hidden w-full max-w-4xl mx-auto flex flex-col md:flex-row gap-4">
             <div class="flex-grow p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
+                <div id="host-settings-panel" class="hidden mb-6 space-y-3 p-4 bg-gray-900/50 rounded-lg border border-indigo-500/30">
+                    <h3 class="text-lg font-bold text-center font-sci-mono text-cyan-400">Host Settings</h3>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Lobby Name</label>
+                        <input id="waiting-lobby-name-input" type="text" class="w-full bg-gray-700 text-white p-2 rounded-lg border border-gray-600 outline-none disabled:opacity-50" disabled>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Starting Energy</label>
+                        <select id="waiting-energy-pool-select" class="w-full bg-gray-700 text-white p-2 rounded-lg border border-gray-600 outline-none disabled:opacity-50" disabled>
+                            <option value="10">Standard (10)</option>
+                            <option value="20">High (20)</option>
+                            <option value="5">Low (5)</option>
+                        </select>
+                    </div>
+                </div>
+                
                 <h2 class="text-2xl font-bold text-center mb-2 font-sci-mono text-cyan-400">Lobby</h2>
                 <h3 id="waiting-lobby-name" class="text-xl text-center text-gray-300 mb-6">...</h3>
                 
@@ -1025,6 +1372,7 @@
                         <select id="p2-color-select" class="hidden mt-2 bg-gray-800 text-xs text-white p-1 rounded border border-gray-600 w-full"></select>
                         <div id="p2-ready-indicator" class="hidden mt-2 text-xs font-bold text-red-500 uppercase tracking-widest">Not Ready</div>
                         <button id="p2-ready-btn" class="hidden mt-2 w-full py-1 px-2 text-xs font-bold rounded bg-gray-700 hover:bg-gray-600 transition-all">Toggle Ready</button>
+                        <button id="kick-p2-btn" class="hidden mt-2 w-full py-1 px-2 text-xs font-bold rounded bg-red-800 hover:bg-red-700 text-white transition-all">Kick Player</button>
                     </div>
                 </div>
                 
@@ -1063,7 +1411,6 @@
                             <p class="text-lg text-yellow-300 animate-pulse">Select a cell and confirm your Nexus location.</p>
                             <button id="confirm-nexus-btn" class="w-full mt-4 bg-green-600 hover:bg-green-500 disabled:bg-gray-600 text-white font-bold p-3 rounded-lg transition-all text-lg" disabled>Confirm Placement</button>
                         </div>
-                        <p id="setup-waiting-msg" class="hidden text-lg text-gray-400 animate-pulse text-center">Waiting for opponent...</p>
 
                         <div id="buy-move-controls" class="hidden space-y-3">
                             <div class="grid grid-cols-2 gap-2">
