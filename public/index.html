@@ -16,7 +16,7 @@
         const CONSTANTS = {
             BOARD_ROWS: 8,
             BOARD_COLS: 10,
-            NEXUS_HP: 3,
+            NEXUS_HP: 3, // Default Nexus HP
             BUILDING_HP: 1,
             COST: { PYLON: 1, MIRROR: 1 },
             NEXUS_RANGE: 3,
@@ -205,6 +205,7 @@
                 profile: document.querySelector('#profile-view'),
                 lobby: document.querySelector('#lobby-view'),
                 lobbyList: document.querySelector('#lobby-list-view'),
+                singleplayer: document.querySelector('#singleplayer-view'), // New View
                 waitingRoom: document.querySelector('#waiting-room-view'),
                 game: document.querySelector('#game-view'),
                 modal: document.querySelector('#modal-view')
@@ -216,10 +217,19 @@
             gameBoard: document.querySelector('#game-board'),
             gameLog: document.querySelector('#game-log'),
 
-            // Lobby View (for name editing)
+            // Lobby View (for name/color editing)
             lobbyNameDisplay: document.querySelector('#lobby-user-name-display'),
             lobbyNameEdit: document.querySelector('#lobby-user-name-edit'),
+            lobbyNameInput: document.querySelector('#lobby-name-input'),
+            lobbyColorInput: document.querySelector('#lobby-color-input'), // New
             
+            // SP View
+            spEnergySelect: document.querySelector('#sp-energy-select'), // New
+            spNexusHpSelect: document.querySelector('#sp-nexus-hp-select'), // New
+
+            // Waiting Room
+            waitingNexusHpSelect: document.querySelector('#waiting-nexus-hp-select'), // New
+
             // Text Displays
             userId: document.querySelector('#user-id-display'),
             userName: document.querySelector('#user-display-name-display'),
@@ -261,10 +271,17 @@
                 const [rS, cS] = p.nexusStartLoc || startLoc; 
                 const [rT, cT] = targetLoc;
 
-                const myZoneStart = (playerIndex === 0) ? 0 : 5;
-                const myZoneEnd = (playerIndex === 0) ? 5 : CONSTANTS.BOARD_COLS;
-                if (cT < myZoneStart || cT >= myZoneEnd) {
-                    return false; // Out of player's zone
+                // For sandbox mode (1 player), zone is the whole board
+                const myZoneStart = (playerIndex === 0 && gameData.players.length > 1) ? 0 : 0;
+                const myZoneEnd = (playerIndex === 0 && gameData.players.length > 1) ? 5 : CONSTANTS.BOARD_COLS;
+                
+                // Allow movement outside zone for P1 if it's a 1-player game
+                if (gameData.players.length > 1) {
+                   const myZoneStart = (playerIndex === 0) ? 0 : 5;
+                   const myZoneEnd = (playerIndex === 0) ? 5 : CONSTANTS.BOARD_COLS;
+                   if (cT < myZoneStart || cT >= myZoneEnd) {
+                       return false; // Out of player's zone
+                   }
                 }
                 
                 const pathDist = GameLogic.findShortestPath([rS, cS], [rT, cT], gameData);
@@ -352,22 +369,31 @@
                             break; // Escape the system
                         } else { // Diagonal hit
                             const [prevR, prevC] = path[path.length - 2];
-                            const ownerIdx = (prevC < 5) ? 0 : 1;
-                            log.push({ msg: "Laser reflected off side boundary.", audience: `p${ownerIdx}` });
+                            
+                            // Determine owner based on *previous* cell's column
+                            let ownerIdx = -1;
+                            if (gameData.players.length > 1) {
+                                ownerIdx = (prevC < 5) ? 0 : 1;
+                            } else {
+                                ownerIdx = 0; // Sandbox mode
+                            }
 
+                            if (ownerIdx !== -1) {
+                                log.push({ msg: "Laser reflected off side boundary.", audience: `p${ownerIdx}` });
+                            }
 
                             r = prevR;
                             c = prevC + dy;
 
-                            path[path.length - 1] = [r, c]; 
+                            path[path.length - 1] = [r, c]; 
 
                             const cOut = c < 0 || c >= CONSTANTS.BOARD_COLS;
                             if (cOut) {
                                 log.push({ msg: "Laser escaped the system (MISS).", audience: "public" });
-                                break; 
+                                break; 
                             }
 
-                            dx = -dx; 
+                            dx = -dx; 
                             direction = [dx, dy];
                         }
                     }
@@ -453,6 +479,11 @@
                         State.currentUser.profile = snap.data();
                         DOM.userName.textContent = State.currentUser.profile.displayName;
                         DOM.$('#lobby-name-input').value = State.currentUser.profile.displayName;
+                        
+                        // Populate and set color in main menu editor
+                        UIManager.populateColors(DOM.lobbyColorInput);
+                        DOM.lobbyColorInput.value = State.currentUser.profile.preferredColor;
+
                         UIManager.show('lobby');
                         API.presence.stop();
                     } else {
@@ -462,6 +493,7 @@
                 } catch(e) { console.error(e); UIManager.toast("Profile load error"); }
             },
 
+            // MODIFIED: To save color as well
             saveProfile: async (name, color) => {
                 const ref = doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'users', State.currentUser.uid, 'profile', 'settings');
                 await setDoc(ref, { displayName: name, preferredColor: color });
@@ -477,8 +509,8 @@
                         if(!State.currentUser?.profile) return;
                         const ref = doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'online_users', State.currentUser.uid);
                         const currentStatus = State.currentUser.status || 'Available';
-                        setDoc(ref, { 
-                            displayName: State.currentUser.profile.displayName, 
+                        setDoc(ref, { 
+                            displayName: State.currentUser.profile.displayName, 
                             lastSeen: Date.now(),
                             status: currentStatus
                         }, { merge: true });
@@ -562,18 +594,17 @@
             },
 
             lobby: {
-                // MODIFIED: To return the new game ID
-                create: async (name, energy, color) => {
+                // MODIFIED: To accept new game settings
+                create: async (name, energy, color, nexusHP) => {
                     const coll = collection(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games');
-                    // Purge old
-                    const q = query(coll, where("players", "array-contains", { userId: State.currentUser.uid })); // Simplified purge query
-
+                    
                     const gameData = {
                         lobbyName: name,
                         status: 'waitingForOpponent',
                         createdAt: Date.now(),
                         maxEnergy: parseInt(energy),
                         energyPool: parseInt(energy),
+                        nexusHP: parseInt(nexusHP) || CONSTANTS.NEXUS_HP, // New setting
                         pendingEnergyRefund: 0,
                         turn: 0,
                         phase: 'setup',
@@ -585,9 +616,9 @@
                             displayName: State.currentUser.profile.displayName,
                             color: color,
                             nexusLocation: null,
-                            nexusHP: CONSTANTS.NEXUS_HP,
+                            nexusHP: parseInt(nexusHP) || CONSTANTS.NEXUS_HP, // New setting
                             buildings: [],
-                            isReady: false
+                            isReady: true
                         }]
                     };
                     const ref = await addDoc(coll, gameData);
@@ -611,15 +642,17 @@
                         return;
                     }
                     
-                    // Logic to pick color not taken
+                    // MODIFIED: Color exclusivity logic
                     let myColor = State.currentUser.profile.preferredColor;
-                    if(data.players[0].color === myColor) myColor = CONSTANTS.COLORS.find(c => c !== myColor) || 'Blue';
+                    if(data.players[0].color === myColor) {
+                        myColor = CONSTANTS.COLORS.find(c => c !== myColor) || 'Blue';
+                    }
 
                     const p2 = {
                         userId: State.currentUser.uid,
                         displayName: State.currentUser.profile.displayName,
-                        color: myColor,
-                        nexusHP: CONSTANTS.NEXUS_HP,
+                        color: myColor, // Use the determined color
+                        nexusHP: data.nexusHP, // Get HP from lobby settings
                         buildings: [],
                         isReady: false,
                         nexusLocation: null
@@ -636,6 +669,14 @@
                 leave: async () => {
                     if(!State.gameId) return;
                     const ref = doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId);
+
+                    // Check if game exists before trying to delete
+                    const snap = await getDoc(ref);
+                    if (!snap.exists()) {
+                        API.game.stopListening();
+                        UIManager.show('lobbyList');
+                        return;
+                    }
 
                     if(State.game.status === 'gameOver' || State.game.players.length <= 1) {
                         await deleteDoc(ref);
@@ -689,6 +730,38 @@
             },
 
             game: {
+                // NEW: Start Sandbox Game
+                startSandbox: async (energy, nexusHP) => {
+                    const coll = collection(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games');
+                    
+                    const gameData = {
+                        lobbyName: "Sandbox Mode",
+                        status: 'inProgress', // Start immediately
+                        phase: 'setup', // Go to setup
+                        createdAt: Date.now(),
+                        maxEnergy: parseInt(energy),
+                        energyPool: parseInt(energy),
+                        nexusHP: parseInt(nexusHP),
+                        pendingEnergyRefund: 0,
+                        turn: 0,
+                        lastShotVector: null,
+                        log: [`Sandbox Mode started.`],
+                        lastUpdated: Date.now(),
+                        players: [{
+                            userId: State.currentUser.uid,
+                            displayName: State.currentUser.profile.displayName,
+                            color: State.currentUser.profile.preferredColor,
+                            nexusLocation: null,
+                            nexusHP: parseInt(nexusHP),
+                            buildings: [],
+                            isReady: true // Only player is always ready
+                        }]
+                    };
+                    const ref = await addDoc(coll, gameData);
+                    API.game.listen(ref.id);
+                    return ref.id;
+                },
+
                 listen: (id) => {
                     if(State.subs.game) State.subs.game();
                     State.gameId = id;
@@ -708,14 +781,15 @@
                         
                         if (!amIStillInGame) {
                             API.game.stopListening();
-                            UIManager.toast("You have been kicked by the host.");
+                            UIManager.toast("You have left the lobby.");
                             UIManager.show('lobbyList');
                             return;
                         }
 
                         // === Local function to update state and render ===
                         const updateAndRender = (dataToRender) => {
-                            if (dataToRender.lastUpdated <= State.game?.lastUpdated) { return; }
+                            // Check for race condition
+                            if (dataToRender.lastUpdated < State.game?.lastUpdated && State.game?.lastUpdated) { return; }
 
                             State.game = dataToRender; // Use the passed-in data
                             State.playerIndex = State.game.players.findIndex(p => p.userId === State.currentUser.uid);
@@ -731,16 +805,17 @@
 
                         // === NEW ANIMATION TRIGGER ===
                         const needsAnimation = newData.lastLaserPath && newData.lastAttackId && 
-                                               (newData.lastAttackId !== State.game?.lastAttackId);
+                                               (newData.lastAttackId !== State.game?.lastAttackId);
 
                         if (needsAnimation) {
                             const pathArray = JSON.parse(newData.lastLaserPath);
-                            const shooterIndex = (newData.turn + 1) % 2;
+                            const shooterIndex = (newData.turn + (newData.players.length - 1)) % newData.players.length;
                             const shooterColor = newData.players[shooterIndex] ? newData.players[shooterIndex].color : 'Red';
+                            const shotVector = newData.lastShotVector;
 
                             // Play animation *first*, using the OLD state.
                             // Then, in the callback, update the state and render.
-                            UIManager.animateLaser(pathArray, shooterColor, () => updateAndRender(newData));
+                            UIManager.animateLaser(pathArray, shooterColor, () => updateAndRender(newData), shotVector);
                         } else {
                             // =============================
                             // No animation, just update immediately
@@ -765,33 +840,40 @@
                     });
                 },
                 startGame: async () => {
+                    if (State.playerIndex !== 0) return UIManager.toast("Only the host can start the game.");
                     // 1. Deep Reset of Players (keep ID/Name/Color/Ready, wipe board data)
                     const resetPlayers = State.game.players.map(p => ({
                         userId: p.userId,
                         displayName: p.displayName,
                         color: p.color,
-                        isReady: p.isReady, // Keep ready state or reset? usually keep until game actually inits
+                        isReady: false,
                         nexusLocation: null,
                         nexusStartLoc: null,
-                        nexusHP: CONSTANTS.NEXUS_HP,
+                        nexusHP: State.game.nexusHP, // Use new setting from game state
                         buildings: []
                     }));
 
                     // 2. Push Full Reset Update
-                    await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                        status: 'inProgress', 
-                        phase: 'setup', 
-                        turn: 0, 
-                        energyPool: State.game.maxEnergy,
-                        pendingEnergyRefund: 0,
-                        lastShotVector: null,
-                        lastLaserPath: null,
-                        lastAttackId: null,
-                        turnBudget: 0,
-                        players: resetPlayers,
-                        lastUpdated: Date.now(),
-                        log: [`Game Started! State Reset.`]
-                    });
+                    try {
+                        await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+                            status: 'inProgress', 
+                            phase: 'setup', 
+                            turn: 0, 
+                            energyPool: State.game.maxEnergy,
+                            pendingEnergyRefund: 0,
+                            lastShotVector: null,
+                            lastLaserPath: null,
+                            lastAttackId: null,
+                            turnBudget: 0,
+                            players: resetPlayers,
+                            lastUpdated: Date.now(),
+                            log: [`Game Started! State Reset.`]
+                        });
+                        console.log("Game start update succeeded.");
+                    } catch (e) {
+                        console.error("FIREBASE STTART GAME ERROR:", e);
+                        UIManager.showError("Failed to start game. Check console/FireStore rules.");
+                    }
                 },
                 placeNexus: async (loc) => {
                     const newP = JSON.parse(JSON.stringify(State.game.players));
@@ -802,7 +884,10 @@
                     updates.lastUpdated = Date.now();
                     
                     // Check if both ready
-                    const p1 = newP[0], p2 = newP[1];
+                    const p1 = newP[0];
+                    const p2 = newP[1]; // Might be undefined in sandbox
+                    
+                    // MODIFIED: Check works for both 1-player and 2-player games
                     if(p1.nexusLocation && (newP.length === 1 || p2?.nexusLocation)) {
                         updates.status = 'inProgress';
                         updates.phase = 'buyMove';
@@ -834,26 +919,29 @@
                             newLogs.push(`Placed ${b.type}.`);
                         }
                         myP.buildings.push(newBuilding);
-                        totalCost += 1; // Assuming all cost 1
+                        totalCost += 1; // Still count for logs, but we'll zero it out
                     });
+
+                    // ADD THIS BLOCK
+                    const isSandbox = newP.length === 1;
+                    const finalCost = isSandbox ? 0 : totalCost;
+                    if (isSandbox && totalCost > 0) {
+                        newLogs.push(`Placed ${totalCost} buildings (free).`);
+                    }
+                    // END ADD
 
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
                         players: newP,
-                        energyPool: State.game.energyPool - totalCost,
-                        turnBudget: State.game.turnBudget - totalCost,
+                        // MODIFY THIS LINE
+                        energyPool: (State.game.energyPool - finalCost) + State.game.pendingEnergyRefund,
+                        // MODIFY THIS LINE
+                        turnBudget: State.game.turnBudget - finalCost,
                         phase: 'attack',
+                        pendingEnergyRefund: 0,
                         lastUpdated: Date.now(),
                         log: [...newLogs, "Attack Phase."]
                     });
                 },
-                // moveNexus: async (to) => {
-                //     const newP = JSON.parse(JSON.stringify(State.game.players));
-                //     newP[State.playerIndex].nexusLocation = to;
-                //     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                //         players: newP,
-                //         log: [...State.game.log, "Nexus Moved."]
-                //     });
-                // },
                 endPhase: async () => {
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
                         phase: 'attack',
@@ -875,7 +963,10 @@
                         hits.forEach(h => {
                             if (h.type === 'nexus') {
                                 newP[h.ownerIdx].nexusHP--;
-                                if(newP[h.ownerIdx].nexusHP <= 0) { gameOver = true; winner = (h.ownerIdx + 1) % 2; }
+                                if(newP[h.ownerIdx].nexusHP <= 0) { 
+                                    gameOver = true; 
+                                    winner = (h.ownerIdx + 1) % newP.length; 
+                                }
                             } else {
                                 newP[h.ownerIdx].buildings = newP[h.ownerIdx].buildings.filter(b => 
                                     !(b.location[0] === h.location[0] && b.location[1] === h.location[1])
@@ -884,9 +975,9 @@
                             }
                         });
 
-                        const nextTurn = (State.game.turn + 1) % 2;
+                        const nextTurn = (State.game.turn + 1) % newP.length;
                         // Apply refunds
-                        const nextPool = State.game.energyPool + State.game.pendingEnergyRefund;
+                        const nextPool = State.game.energyPool;
 
                         // Calculate next player's budget
                         const nextPlayer = newP[nextTurn];
@@ -923,8 +1014,8 @@
                     }
                 },
                 skipAttack: async () => {
-                    const nextTurn = (State.game.turn + 1) % 2;
                     const newP = JSON.parse(JSON.stringify(State.game.players));
+                    const nextTurn = (State.game.turn + 1) % newP.length;
                     const nextPlayer = newP[nextTurn];
                     if(nextPlayer?.nexusLocation) nextPlayer.nexusStartLoc = nextPlayer.nexusLocation;
                     
@@ -981,13 +1072,16 @@
                     newLogs.push(`${myP.displayName} skipped the attack phase.`);
 
                     // 2. End Turn Logic (from skipAttack)
-                    const nextTurn = (State.game.turn + 1) % 2;
+                    const isSandbox = newP.length === 1;
+                    const finalCost = isSandbox ? 0 : totalCost;
+
+                    const nextTurn = (State.game.turn + 1) % newP.length;
                     const nextPlayer = newP[nextTurn];
                     if(nextPlayer?.nexusLocation) nextPlayer.nexusStartLoc = nextPlayer.nexusLocation;
 
-                    const newEnergyPool = (State.game.energyPool - totalCost) + State.game.pendingEnergyRefund;
+                    const newEnergyPool = (State.game.energyPool - finalCost) + State.game.pendingEnergyRefund;
                     const nextPlayerPylons = nextPlayer?.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
-                    const newTurnBudget = Math.min(nextPlayerPylons + 1, newEnergyPool);
+                    const newTurnBudget = isSandbox ? 99 : Math.min(nextPlayerPylons + 1, newEnergyPool);
 
                     await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
                         turn: nextTurn,
@@ -1004,7 +1098,8 @@
                     });
                 },
 
-                updateSettings: async (newName, newEnergy) => {
+                // MODIFIED: To accept newNexusHP
+                updateSettings: async (newName, newEnergy, newNexusHP) => {
                     if (State.playerIndex !== 0) return; // Host only
 
                     const newP = JSON.parse(JSON.stringify(State.game.players));
@@ -1021,6 +1116,7 @@
                         lobbyName: newName,
                         maxEnergy: parseInt(newEnergy),
                         energyPool: parseInt(newEnergy), // Also update the pool to match
+                        nexusHP: parseInt(newNexusHP), // New Setting
                         players: newP,
                         lastUpdated: Date.now(),
                         log: newLogs
@@ -1052,9 +1148,9 @@
                 if(DOM.views[viewName]) DOM.views[viewName].classList.remove('hidden');
                 
                 // Update presence status based on view
-                if(viewName === 'lobbyList') API.presence.setStatus('Available');
+                if(viewName === 'lobbyList' || viewName === 'singleplayer') API.presence.setStatus('Available');
                 else if (viewName === 'game' || viewName === 'waitingRoom') API.presence.setStatus('Busy');
-                // Note: 'lobby' (main menu) does not set a status
+                // Note: 'lobby' (main menu) does not set a status, presence is off
             },
             toast: (msg) => {
                 const el = document.createElement('div');
@@ -1079,12 +1175,14 @@
                 DOM.views.modal.classList.remove('hidden');
             },
             populateColors: (select) => {
+                const val = select.value; // Store current value
                 select.innerHTML = '';
                 CONSTANTS.COLORS.forEach(c => {
                     const opt = document.createElement('option');
                     opt.value = c; opt.textContent = c;
                     select.appendChild(opt);
                 });
+                select.value = val; // Restore
             },
             renderOnlineList: (snap) => {
                 DOM.onlineLists.forEach(list => list.innerHTML = '');
@@ -1152,6 +1250,7 @@
                 DOM.views.modal.classList.remove('hidden');
             },
             
+            // MODIFIED: To include Nexus HP settings
             renderWaitingRoom: () => {
                 const g = State.game;
                 const p1 = g.players[0];
@@ -1162,30 +1261,35 @@
                 const hostPanel = DOM.$('#host-settings-panel');
                 const lobbyNameInput = DOM.$('#waiting-lobby-name-input');
                 const energySelect = DOM.$('#waiting-energy-pool-select');
+                const nexusHpSelect = DOM.waitingNexusHpSelect; // From Cache
 
                 if (isHost) {
                     hostPanel.classList.remove('hidden');
                     lobbyNameInput.disabled = false;
                     energySelect.disabled = false;
+                    nexusHpSelect.disabled = false; // Enable HP select
                     
                     lobbyNameInput.value = g.lobbyName;
                     energySelect.value = g.maxEnergy;
+                    nexusHpSelect.value = g.nexusHP; // Set HP value
 
                     // Add event listeners that update settings and un-ready P2
-                    lobbyNameInput.onchange = (e) => {
-                        API.game.updateSettings(e.target.value, energySelect.value);
+                    const updateSettings = () => {
+                        API.game.updateSettings(lobbyNameInput.value, energySelect.value, nexusHpSelect.value);
                     };
-                    energySelect.onchange = (e) => {
-                        API.game.updateSettings(lobbyNameInput.value, e.target.value);
-                    };
+                    lobbyNameInput.onchange = updateSettings;
+                    energySelect.onchange = updateSettings;
+                    nexusHpSelect.onchange = updateSettings; // Add handler
 
                 } else {
                     // Guest just sees the panel, but disabled
                     hostPanel.classList.remove('hidden');
                     lobbyNameInput.value = g.lobbyName;
                     energySelect.value = g.maxEnergy;
+                    nexusHpSelect.value = g.nexusHP; // Set HP value
                     lobbyNameInput.disabled = true;
                     energySelect.disabled = true;
+                    nexusHpSelect.disabled = true; // Disable HP select
                 }
 
                 DOM.$('#waiting-lobby-name').textContent = g.lobbyName;
@@ -1197,8 +1301,6 @@
                     const sel = DOM.$(`#${prefix}-color-select`);
                     
                     const kickBtn = DOM.$('#kick-p2-btn');
-                    
-                    DOM.$(`#${prefix}-ready-btn`).classList.add('hidden');
 
                     if(!p) {
                         nameEl.textContent = "Empty"; 
@@ -1232,10 +1334,19 @@
                     sel.classList.remove('hidden');
                     if (sel.options.length === 0) UIManager.populateColors(sel);
                     sel.value = p.color;
-                    sel.disabled = !isMe;
+                    sel.disabled = !isMe; // Can only change your own color
                     if(isMe) {
                         sel.onchange = async (e) => {
                             const newP = [...State.game.players];
+                            const otherPlayer = newP[(State.playerIndex + 1) % 2];
+                            
+                            // Color Exclusivity Check
+                            if (otherPlayer && otherPlayer.color === e.target.value) {
+                                UIManager.toast("Color is already taken!");
+                                e.target.value = p.color; // Revert
+                                return;
+                            }
+                            
                             newP[State.playerIndex].color = e.target.value;
                             await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), { players: newP });
                         };
@@ -1261,10 +1372,11 @@
                     const amIReady = g.players[State.playerIndex].isReady;
                     mainBtn.textContent = amIReady ? "Cancel Ready" : "Ready Up";
                     mainBtn.disabled = false;
-                    mainBtn.onclick = API.game.toggleReady;
+                    mainBtn.onclick = API.game.toggleReady; // Guest's job is always to toggle ready
 
                     mainBtn.className = `w-full font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg mb-3 cursor-pointer ${amIReady ? 'bg-yellow-600 hover:bg-yellow-500 text-white' : 'bg-green-600 hover:bg-green-500 text-white'}`;
                 } else {
+                    // This handles non-host, non-guest (i.e., should not happen in 2-player, but good fallback)
                     mainBtn.classList.add('hidden');
                 }
             },
@@ -1288,7 +1400,7 @@
                     return (c && c.text) ? c.text : 'text-white';
                 };
 
-                const opponentP = g.players[(State.playerIndex + 1) % 2];
+                const opponentP = g.players.length > 1 ? g.players[(State.playerIndex + 1) % 2] : null;
                 const isMyTurn = g.turn === State.playerIndex;
 
                 // 1. Set Your Info
@@ -1300,28 +1412,36 @@
                     const oppColorClass = getTextColor(opponentP.color);
                     DOM.opponentHudInfo.innerHTML = `<span class="${oppColorClass}">${opponentP.displayName} (HP: ${opponentP.nexusHP})</span>`;
                 } else {
-                    DOM.opponentHudInfo.innerHTML = `<span class="text-gray-500">Waiting... (HP: --)</span>`;
+                    DOM.opponentHudInfo.innerHTML = `<span class="text-gray-500">Sandbox Mode</span>`;
                 }
                 // 3. Set Turn Indicator
                 if(isMyTurn) {
                     DOM.playerHudLabel.textContent = "Current Turn";
                     DOM.playerHudLabel.className = "text-xs text-yellow-300 animate-pulse block";
-                    DOM.opponentHudLabel.textContent = "Opponent";
+                    DOM.opponentHudLabel.textContent = opponentP ? "Opponent" : "---";
                     DOM.opponentHudLabel.className = "text-xs text-gray-400 block";
                 } else {
                     DOM.playerHudLabel.textContent = "You Are";
                     DOM.playerHudLabel.className = "text-xs text-gray-400 block";
-                    DOM.opponentHudLabel.textContent = "Current Turn";
-                    DOM.opponentHudLabel.className = "text-xs text-yellow-300 animate-pulse block";
+                    DOM.opponentHudLabel.textContent = opponentP ? "Current Turn" : "---";
+                    DOM.opponentHudLabel.className = opponentP ? "text-xs text-yellow-300 animate-pulse block" : "text-xs text-gray-400 block";
                 }
 
                 DOM.phase.textContent = g.phase;
-                DOM.energy.textContent = g.energyPool;
-                
-                // Calc Budget
-                const budget = (g.turn === State.playerIndex && g.phase === 'buyMove') ? (g.turnBudget || 0) : 0;
-                const availableBudget = budget - State.previewCost;
-                DOM.budget.textContent = availableBudget;
+
+                const isSandbox = g.players.length === 1;
+                let availableBudget;
+
+                if (isSandbox) {
+                    DOM.energy.textContent = "∞";
+                    DOM.budget.textContent = "∞";
+                    availableBudget = Infinity; // Pass infinity to renderControls
+                } else {
+                    DOM.energy.textContent = g.energyPool;
+                    const budget = (g.turn === State.playerIndex && g.phase === 'buyMove') ? (g.turnBudget || 0) : 0;
+                    availableBudget = budget - State.previewCost;
+                    DOM.budget.textContent = availableBudget;
+                }
                 
                 // Render sub-components
                 UIManager.renderBoard(); // Will use preview state
@@ -1351,8 +1471,18 @@
             renderBoard: () => {
                 const g = State.game;
                 DOM.gameBoard.innerHTML = '';
-                const myZoneStart = State.playerIndex === 0 ? 0 : 5;
-                const myZoneEnd = State.playerIndex === 0 ? 5 : 10;
+                
+                // MODIFIED: Sandbox mode has different zone rules
+                let myZoneStart, myZoneEnd;
+                if (g.players.length > 1) {
+                    myZoneStart = State.playerIndex === 0 ? 0 : 5;
+                    myZoneEnd = State.playerIndex === 0 ? 5 : 10;
+                } else {
+                    // Sandbox mode, you own the whole board
+                    myZoneStart = 0;
+                    myZoneEnd = 10;
+                }
+
 
                 for(let r=0; r<CONSTANTS.BOARD_ROWS; r++){
                     for(let c=0; c<CONSTANTS.BOARD_COLS; c++){
@@ -1388,22 +1518,38 @@
                         // 2a. Check for preview nexus move in BUYMOVE phase
                         if (!unit && !previewBuilding && State.game.phase === 'buyMove') {
                              if (State.previewNexusLocation && State.previewNexusLocation[0] === r && State.previewNexusLocation[1] === c) {
-                                 unitToRender = { type: 'nexus', ownerIdx: State.playerIndex, hp: CONSTANTS.NEXUS_HP };
-                                 isPreview = true;
+                                  unitToRender = { type: 'nexus', ownerIdx: State.playerIndex, hp: g.players[State.playerIndex].nexusHP };
+                                  isPreview = true;
                              }
                         }
 
                         // 2b. Check for preview nexus in SETUP phase
                         if (!unit && !unitToRender && State.currentAction === 'setup') {
                             if (State.previewNexus && State.previewNexus[0] === r && State.previewNexus[1] === c) {
-                                unitToRender = { type: 'nexus', ownerIdx: State.playerIndex, hp: CONSTANTS.NEXUS_HP };
+                                unitToRender = { type: 'nexus', ownerIdx: State.playerIndex, hp: g.players[State.playerIndex].nexusHP };
                                 isPreview = true;
                             }
                         }
 
                         // 3. Render the unit (real or preview)
                         if(unitToRender) {
-                            if(isMyZone || unitToRender.ownerIdx === State.playerIndex) { // Simple FOW
+                            // MODIFIED: FOW logic
+                            const isMyUnit = unitToRender.ownerIdx === State.playerIndex;
+                            const isOpponentUnit = g.players.length > 1 && !isMyUnit;
+
+                            // Show if:
+                            // 1. It's my unit
+                            // 2. It's in my zone (sandbox = whole board)
+                            // 3. It's an opponent unit *not* in my zone (sandbox never meets this)
+                            
+                            let showUnit = isMyUnit || isMyZone;
+                            
+                            // In 2-player, if it's an opponent unit NOT in my zone, hide it
+                            if (g.players.length > 1 && isOpponentUnit && !isMyZone) {
+                                showUnit = false;
+                            }
+                            
+                            if(showUnit) { 
                                 const color = CONSTANTS.COLOR_MAP[g.players[unitToRender.ownerIdx].color];
 
                                 let svg;
@@ -1417,7 +1563,7 @@
                                     svg = `<svg class="w-full h-full" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${shape}</svg>`;
                                 }
 
-                                const maxHp = unitToRender.type === 'nexus' ? CONSTANTS.NEXUS_HP : CONSTANTS.BUILDING_HP;
+                                const maxHp = unitToRender.type === 'nexus' ? g.nexusHP : CONSTANTS.BUILDING_HP;
                                 // Add "PREVIEW" text and opacity for previewed units
                                 const hpDisplay = (isPreview) ? `<div class="absolute bottom-0 right-0 text-[10px] bg-black/80 px-1 text-blue-300">PREVIEW</div>` : `<div class="absolute bottom-0 right-0 text-[10px] bg-black/80 px-1 text-white">${unitToRender.hp}/${maxHp}</div>`;
                                 const previewClass = (isPreview) ? 'opacity-75' : '';
@@ -1517,7 +1663,8 @@
                     const myNexusLoc = State.game.players[State.playerIndex]?.nexusLocation;
                     const lastPathStr = State.game.lastLaserPath;
 
-                    if (myNexusLoc && lastPathStr) {
+                    // Disable return-fire rule
+                    if (g.players.length > 1 && myNexusLoc && lastPathStr) {
                         try {
                             const path = JSON.parse(lastPathStr);
                             const myR = myNexusLoc[0];
@@ -1536,30 +1683,37 @@
                         } catch (e) {
                             console.error("Failed to parse lastLaserPath", 0);
                         }
+                    }
 
                     DOM.$$('button[data-dir]').forEach(btn => {
-                            if (btn.dataset.dir === disabledDir) {
-                                btn.disabled = true;
-                                btn.classList.add('opacity-30', 'bg-gray-700', 'cursor-not-allowed');
-                                btn.classList.remove('bg-red-800', 'hover:bg-red-700');
-                            } else {
-                                btn.disabled = false;
-                                btn.classList.remove('opacity-30', 'bg-gray-700', 'cursor-not-allowed');
-                                btn.classList.add('bg-red-800', 'hover:bg-red-700');
-                            }
-                        });
-                    }
+                        if (btn.dataset.dir === disabledDir) {
+                            btn.disabled = true;
+                            btn.classList.add('opacity-30', 'bg-gray-700', 'cursor-not-allowed');
+                            btn.classList.remove('bg-red-800', 'hover:bg-red-700');
+                        } else {
+                            btn.disabled = false;
+                            btn.classList.remove('opacity-30', 'bg-gray-700', 'cursor-not-allowed');
+                            btn.classList.add('bg-red-800', 'hover:bg-red-700');
+                        }
+                    });
                 }
             },
             
-            animateLaser: (path, colorName, onCompleteCallback) => {
+            animateLaser: (path, colorName, onCompleteCallback, shotVector) => {
                 const hex = CONSTANTS.LASER_COLORS[colorName] || '#ff0000';
 
                 DOM.$$('.laser-beam-svg').forEach(el => el.remove());
                 DOM.$$('.laser-active').forEach(el => el.classList.remove('laser-active'));
 
-                const myZoneStart = State.playerIndex === 0 ? 0 : 5;
-                const myZoneEnd = State.playerIndex === 0 ? 5 : CONSTANTS.BOARD_COLS;
+                let myZoneStart, myZoneEnd;
+                if (State.game.players.length > 1) {
+                    myZoneStart = State.playerIndex === 0 ? 0 : 5;
+                    myZoneEnd = State.playerIndex === 0 ? 5 : CONSTANTS.BOARD_COLS;
+                } else {
+                    myZoneStart = 0;
+                    myZoneEnd = CONSTANTS.BOARD_COLS;
+                }
+
 
                 const getEdgeCoords = (dr, dc) => {
                     if (dr === 0 && dc === 1) return ["0%", "50%"]; // from W
@@ -1577,7 +1731,7 @@
                 const pulseSpeed = '0.5s';
                 const pulseDelayStep = 0.05;
                 const interval = setInterval(() => {
-                    if(i >= path.length) { 
+                    if(i >= path.length) { 
                         clearInterval(interval); // Stop the "in" animation
 
                         // Start the "out" animation
@@ -1601,16 +1755,23 @@
                     const prev = path[i-1];
                     const next = (i + 1 < path.length) ? path[i+1] : null;
 
+                    // MODIFIED: FOW for laser
                     const isMySide = (c >= myZoneStart && c < myZoneEnd);
-                    if (isMySide) {
+                    if (State.game.players.length === 1 || isMySide) {
                         const cell = DOM.$(`[data-r="${r}"][data-c="${c}"]`);
 
-                        if(cell) { 
+                        if(cell) { 
                             cell.style.setProperty('--laser-color', hex);
                             let svgHTML = '';
                             if (i === 0 && next) {
-                                const dr_out = next[0] - r;
-                                const dc_out = next[1] - c;
+                                let dr_out, dc_out;
+                                if (shotVector) {
+                                    [dr_out, dc_out] = shotVector; // Use the direct shot vector
+                                } else {
+                                    // Fallback to old logic just in case
+                                    dr_out = next[0] - r;
+                                    dc_out = next[1] - c;
+                                }
                                 const [x_out, y_out] = getEdgeCoords(dr_out * -1, dc_out * -1);
                                 const delay = i * pulseDelayStep;
                                 const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
@@ -1657,7 +1818,7 @@
                                     const delay = i * pulseDelayStep;
                                     const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
                                     svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="50%" y2="50%" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />` +
-                                            `<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
+                                              `<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
                                 } else if (isHit) {
                                     const delay = i * pulseDelayStep;
                                     const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
@@ -1690,34 +1851,57 @@
                     API.presence.start(); 
                     API.lobby.listenToList(); 
                 };
+
+                // NEW: Single Player Button
+                DOM.$('#single-player-btn').onclick = () => {
+                    UIManager.show('singleplayer');
+                    API.presence.stop();
+                    API.lobby.stopListeningToList();
+                };
+
+                // NEW: Single Player View Handlers
+                DOM.$('#singleplayer-back-btn').onclick = () => {
+                    UIManager.show('lobby');
+                };
+                DOM.$('#start-sandbox-btn').onclick = () => {
+                    const energy = DOM.spEnergySelect.value;
+                    const hp = DOM.spNexusHpSelect.value;
+                    API.game.startSandbox(parseInt(energy), parseInt(hp));
+                };
+
+
+                // MODIFIED: Profile editing
                 DOM.$('#edit-name-btn').onclick = () => {
                     DOM.lobbyNameDisplay.classList.add('hidden');
                     DOM.lobbyNameEdit.classList.remove('hidden');
-                    DOM.$('#lobby-name-input').value = State.currentUser.profile.displayName;
-                    DOM.$('#lobby-name-input').focus();
+                    DOM.lobbyNameInput.value = State.currentUser.profile.displayName;
+                    DOM.lobbyColorInput.value = State.currentUser.profile.preferredColor; // Set color
+                    DOM.lobbyNameInput.focus();
                 };
                 DOM.$('#cancel-name-btn').onclick = () => {
                     DOM.lobbyNameDisplay.classList.remove('hidden');
                     DOM.lobbyNameEdit.classList.add('hidden');
                 };
                 DOM.$('#save-name-btn').onclick = () => {
-                    const newName = DOM.$('#lobby-name-input').value;
-                    if (newName && newName !== State.currentUser.profile.displayName) {
-                        API.saveProfile(newName, State.currentUser.profile.preferredColor);
-                        UIManager.toast("Name updated!");
+                    const newName = DOM.lobbyNameInput.value;
+                    const newColor = DOM.lobbyColorInput.value; // Get color
+                    if (newName && (newName !== State.currentUser.profile.displayName || newColor !== State.currentUser.profile.preferredColor)) {
+                        API.saveProfile(newName, newColor); // Save both
+                        UIManager.toast("Profile updated!");
                     }
                     DOM.lobbyNameDisplay.classList.remove('hidden');
                     DOM.lobbyNameEdit.classList.add('hidden');
                 };
 
-                // MODIFIED: To be async
+                // MODIFIED: To be async and pass settings
                 DOM.$('#show-create-lobby-btn').onclick = async () => {
                     const defaultName = `${State.currentUser.profile.displayName}'s Game`;
                     const defaultEnergy = 10;
+                    const defaultNexusHP = 3; // New default
                     const defaultColor = State.currentUser.profile.preferredColor;
                     
                     // Await creation so we are immediately put in the lobby
-                    await API.lobby.create(defaultName, defaultEnergy, defaultColor);
+                    await API.lobby.create(defaultName, defaultEnergy, defaultColor, defaultNexusHP);
                 };
 
                 // --- Invite Handler (Event Delegation) ---
@@ -1743,8 +1927,6 @@
                     API.presence.stop(); 
                     API.lobby.stopListeningToList();
                 };
-                DOM.$('#p1-ready-btn').onclick = API.game.toggleReady;
-                DOM.$('#p2-ready-btn').onclick = API.game.toggleReady;
                 DOM.$('#new-game-btn').onclick = () => { 
                     DOM.views.modal.classList.add('hidden'); 
                     API.lobby.leave(); // This already sends user to 'lobbyList'
@@ -1819,6 +2001,11 @@
                     };
                 });
                 DOM.$('#skip-attack-btn').onclick = API.game.cancelAttack;
+                DOM.$('#abandon-game-btn').onclick = () => {
+                    // We can just re-use the lobby leave logic
+                    API.lobby.leave();
+                    UIManager.toast("Game abandoned.");
+                };
             },
             
             // NEW: Handler for sending invites
@@ -1830,7 +2017,7 @@
                     if (!gameId) {
                         UIManager.toast("Creating new lobby...");
                         const defaultName = `${State.currentUser.profile.displayName}'s Invite Lobby`;
-                        gameId = await API.lobby.create(defaultName, 10, State.currentUser.profile.preferredColor);
+                        gameId = await API.lobby.create(defaultName, 10, State.currentUser.profile.preferredColor, CONSTANTS.NEXUS_HP);
                         if (!gameId) throw new Error("Lobby creation failed.");
                         // API.lobby.create already starts listening, which will set State.game
                     }
@@ -1854,7 +2041,14 @@
 
             boardClick: (r, c) => {
                 const act = State.currentAction;
-                const isMine = (c >= (State.playerIndex === 0 ? 0 : 5) && c < (State.playerIndex === 0 ? 5 : 10));
+                
+                // MODIFIED: Sandbox mode zone
+                let isMine;
+                if (State.game.players.length > 1) {
+                    isMine = (c >= (State.playerIndex === 0 ? 0 : 5) && c < (State.playerIndex === 0 ? 5 : 10));
+                } else {
+                    isMine = true; // Whole board is yours in sandbox
+                }
                 
                 // Check for any existing unit (real or preview)
                 const realUnit = GameLogic.getUnitAt(r,c, State.game);
@@ -1872,17 +2066,20 @@
                 
                 // --- New Building Placement Logic (Req #2, #4, #5) ---
                 const budget = (State.game.turnBudget || 0) - State.previewCost;
+                const isSandbox = State.game.players.length === 1;
                 
                 if((act === 'place-pylon' || act === 'place-mirror') && isMine && !isOccupied) {
-                    if (budget < 1) {
-                        UIManager.toast("Out of budget for this turn.");
-                        return;
+                    if (!isSandbox) {
+                        if (budget < 1) {
+                            UIManager.toast("Out of budget for this turn.");
+                            return;
+                        }
+                        if (State.game.energyPool - State.previewCost < 1) {
+                            UIManager.toast("Not enough energy in pool.");
+                            return;
+                        }
                     }
-                    if (State.game.energyPool - State.previewCost < 1) {
-                        UIManager.toast("Not enough energy in pool.");
-                        return;
-                    }
-                    
+
                     const type = act.split('-')[1];
                     const newPreviewBuilding = {
                         type: type,
@@ -1894,7 +2091,9 @@
                     }
                     
                     State.previewBuildings.push(newPreviewBuilding);
-                    State.previewCost += 1;
+
+                    if (!isSandbox)
+                        State.previewCost += 1;
                     
                     // Re-render board and controls (Req #4: allows placing multiples)
                     UIManager.renderGame();
@@ -2013,8 +2212,10 @@
                     <button id="edit-name-btn" class="text-xs bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded-md">Edit</button>
                 </div>
 
+                <!-- MODIFIED: Edit block now includes color -->
                 <div id="lobby-user-name-edit" class="hidden space-y-2">
-                    <input id="lobby-name-input" type="text" class="w-full bg-gray-700 text-white p-2 rounded-lg border border-gray-600 outline-none">
+                    <input id="lobby-name-input" type="text" class="w-full bg-gray-700 text-white p-2 rounded-lg border border-gray-600 outline-none" placeholder="Display Name">
+                    <select id="lobby-color-input" class="w-full bg-gray-700 text-white p-2 rounded-lg border border-gray-600 outline-none"></select>
                     <div class="flex gap-2">
                         <button id="cancel-name-btn" class="w-1/2 text-xs bg-gray-600 hover:bg-gray-500 px-2 py-1 rounded-md">Cancel</button>
                         <button id="save-name-btn" class="w-1/2 text-xs bg-green-600 hover:bg-green-500 px-2 py-1 rounded-md">Save</button>
@@ -2025,8 +2226,41 @@
             </div>
 
             <div class="space-y-4">
-                <button id="single-player-btn" class="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold py-3 px-4 rounded-lg opacity-50 cursor-not-allowed" disabled>Singleplayer (Soon)</button>
+                <!-- MODIFIED: Enabled Singleplayer -->
+                <button id="single-player-btn" class="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg">Singleplayer</button>
                 <button id="multi-player-btn" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg">Multiplayer</button>
+            </div>
+        </div>
+
+        <!-- NEW: Singleplayer View -->
+        <div id="singleplayer-view" class="hidden w-full max-w-md mx-auto p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
+            <h1 class="text-3xl font-bold text-center mb-6 font-sci-mono text-cyan-400">Singleplayer</h1>
+            
+            <div class="space-y-4 p-4 bg-gray-900/50 rounded-lg">
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-1">Starting Energy</label>
+                    <select id="sp-energy-select" class="w-full bg-gray-700 text-white p-2 rounded-lg border border-gray-600 outline-none">
+                        <option value="10">Standard (10)</option>
+                        <option value="20">High (20)</option>
+                        <option value="5">Low (5)</option>
+                        <option value="99">Unlimited (99)</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-400 mb-1">Nexus HP</label>
+                    <select id="sp-nexus-hp-select" class="w-full bg-gray-700 text-white p-2 rounded-lg border border-gray-600 outline-none">
+                        <option value="3">Standard (3)</option>
+                        <option value="1">Fragile (1)</option>
+                        <option value="5">Fortified (5)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="space-y-4 mt-6">
+                <button id="start-sandbox-btn" class="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg">Play Sandbox</button>
+                <button id="start-ai-btn" class="w-full bg-gray-600 opacity-50 cursor-not-allowed text-white font-bold py-3 px-4 rounded-lg" disabled>Play vs. AI (Soon)</button>
+                <hr class="border-gray-600"/>
+                <button id="singleplayer-back-btn" class="w-full bg-gray-700 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded-lg">&larr; Main Menu</button>
             </div>
         </div>
         
@@ -2050,6 +2284,8 @@
 
         <div id="waiting-room-view" class="hidden w-full max-w-4xl mx-auto flex flex-col md:flex-row gap-4">
             <div class="flex-grow p-6 bg-gray-800/50 rounded-lg shadow-xl backdrop-blur-md border border-indigo-500/30">
+                
+                <!-- MODIFIED: Added Nexus HP Setting -->
                 <div id="host-settings-panel" class="hidden mb-6 space-y-3 p-4 bg-gray-900/50 rounded-lg border border-indigo-500/30">
                     <h3 class="text-lg font-bold text-center font-sci-mono text-cyan-400">Host Settings</h3>
                     <div>
@@ -2064,6 +2300,14 @@
                             <option value="5">Low (5)</option>
                         </select>
                     </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400 mb-1">Nexus HP</label>
+                        <select id="waiting-nexus-hp-select" class="w-full bg-gray-700 text-white p-2 rounded-lg border border-gray-600 outline-none disabled:opacity-50" disabled>
+                            <option value="3">Standard (3)</option>
+                            <option value="1">Fragile (1)</option>
+                            <option value="5">Fortified (5)</option>
+                        </select>
+                    </div>
                 </div>
                 
                 <h2 class="text-2xl font-bold text-center mb-2 font-sci-mono text-cyan-400">Lobby</h2>
@@ -2075,7 +2319,6 @@
                         <p id="p1-name" class="text-lg font-bold truncate">...</p>
                         <select id="p1-color-select" class="mt-2 bg-gray-800 text-xs text-white p-1 rounded border border-gray-600 w-full disabled:opacity-50" disabled></select>
                         <div id="p1-ready-indicator" class="mt-2 text-xs font-bold text-red-500 uppercase tracking-widest">Not Ready</div>
-                        <button id="p1-ready-btn" class="hidden mt-2 w-full py-1 px-2 text-xs font-bold rounded bg-gray-700 hover:bg-gray-600 transition-all">Toggle Ready</button>
                     </div>
 
                     <div class="p-4 bg-gray-900/50 rounded-lg relative group">
@@ -2083,7 +2326,6 @@
                         <p id="p2-name" class="text-lg font-bold truncate text-gray-500">Empty</p>
                         <select id="p2-color-select" class="hidden mt-2 bg-gray-800 text-xs text-white p-1 rounded border border-gray-600 w-full"></select>
                         <div id="p2-ready-indicator" class="hidden mt-2 text-xs font-bold text-red-500 uppercase tracking-widest">Not Ready</div>
-                        <button id="p2-ready-btn" class="hidden mt-2 w-full py-1 px-2 text-xs font-bold rounded bg-gray-700 hover:bg-gray-600 transition-all">Toggle Ready</button>
                         <button id="kick-p2-btn" class="hidden mt-2 w-full py-1 px-2 text-xs font-bold rounded bg-red-800 hover:bg-red-700 text-white transition-all">Kick Player</button>
                     </div>
                 </div>
@@ -2177,6 +2419,9 @@
                         <div id="waiting-controls" class="hidden text-center">
                             <p class="text-lg text-gray-400 animate-pulse">Waiting for opponent...</p>
                         </div>
+                        
+                        <hr class="border-gray-600 my-4">
+                        <button id="abandon-game-btn" class="w-full bg-red-900/80 hover:bg-red-800 text-white font-bold py-2 px-4 rounded-lg transition-all shadow-lg">Abandon Game</button>
                     </div>
 
                     <div class="flex-grow p-4 bg-gray-800/50 rounded-lg shadow-lg backdrop-blur-md border border-indigo-500/30 min-h-[200px] lg:min-h-0">
