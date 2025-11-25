@@ -162,17 +162,24 @@ const State = {
     auth: null,
     currentUser: null,
     gameId: null,
-    game: null,
+    
+    serverState: null,
+    game: null,       
     playerIndex: -1,
+    
+    // Tracker for Context Switches
+    lastKnownTurn: -1,
+    lastKnownPhase: null,
+    
+    // NEW: Simple memory for the AI
+    botMemory: {
+        wasHitLastTurn: false,
+        lastHitMirror: null
+    },
     
     currentAction: null,
     selectedLocation: null,
     currentMirrorOrientation: 'N',
-
-    previewNexus: null,
-    previewNexusLocation: null,
-    previewBuildings: [],
-    previewCost: 0,
     
     subs: {
         game: null,
@@ -256,38 +263,41 @@ const GameLogic = {
         return null;
     },
 
-    isValidNexusMove: (startLoc, targetLoc, playerIndex, gameData) => {
+    isValidNexusMove: (startLoc, targetLoc, playerIndex, gameData, previewBuildings = []) => {
         if (!startLoc || !targetLoc) return false;
         const p = gameData.players[playerIndex];
-        // Use start-of-turn location for range check
+        
+        // 1. Always calc range from the Start of Turn location
         const [rS, cS] = p.nexusStartLoc || startLoc; 
         const [rT, cT] = targetLoc;
 
-        // For sandbox mode (1 player), zone is the whole board
-        const myZoneStart = (playerIndex === 0 && gameData.players.length > 1) ? 0 : 0;
-        const myZoneEnd = (playerIndex === 0 && gameData.players.length > 1) ? 5 : CONSTANTS.BOARD_COLS;
-        
-        // Allow movement outside zone for P1 if it's a 1-player game
+        // Zone check
         if (gameData.players.length > 1) {
             const myZoneStart = (playerIndex === 0) ? 0 : 5;
             const myZoneEnd = (playerIndex === 0) ? 5 : CONSTANTS.BOARD_COLS;
             if (cT < myZoneStart || cT >= myZoneEnd) {
-                return false; // Out of player's zone
+                return false; 
             }
         }
         
-        const pathDist = GameLogic.findShortestPath([rS, cS], [rT, cT], gameData);
+        // Check against preview buildings
+        if (previewBuildings.some(b => b.location[0] === rT && b.location[1] === cT)) {
+            return false;
+        }
+
+        // 2. Pathfinding must ignore the player's *current* Nexus location as an obstacle
+        const pathDist = GameLogic.findShortestPath([rS, cS], [rT, cT], gameData, playerIndex);
         if (pathDist > CONSTANTS.NEXUS_RANGE) return false;
 
         const unit = GameLogic.getUnitAt(rT, cT, gameData);
-        // Can only move to empty space or own nexus (self)
+        // Target must be empty or self
         if (unit && unit.type !== 'nexus') return false;
         if (unit && unit.type === 'nexus' && unit.ownerIdx !== playerIndex) return false;
         
         return true;
     },
 
-    findShortestPath: (startLoc, targetLoc, gameData) => {
+    findShortestPath: (startLoc, targetLoc, gameData, playerIndex) => {
         const [startR, startC] = startLoc;
         const [targetR, targetC] = targetLoc;
 
@@ -295,16 +305,13 @@ const GameLogic = {
         let visited = new Set();
         visited.add(`${startR},${startC}`);
 
-        const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]]; // N, S, W, E
+        const directions = [[-1, 0], [1, 0], [0, -1], [0, 1]]; 
 
         while (queue.length > 0) {
             const [r, c, dist] = queue.shift();
 
-            if (r === targetR && c === targetC)
-                return dist;
-
-            if (dist >= CONSTANTS.NEXUS_RANGE)
-                continue;
+            if (r === targetR && c === targetC) return dist;
+            if (dist >= CONSTANTS.NEXUS_RANGE) continue;
 
             for (const [dr, dc] of directions) {
                 const nr = r + dr;
@@ -319,7 +326,10 @@ const GameLogic = {
                 const unit = GameLogic.getUnitAt(nr, nc, gameData);
                 const isTarget = (nr === targetR && nc === targetC);
 
-                if (unit && !isTarget)
+                // FIX: If the unit is my own Nexus, treat it as empty space (walkable)
+                const isMyNexus = unit && unit.type === 'nexus' && unit.ownerIdx === playerIndex;
+
+                if (unit && !isTarget && !isMyNexus)
                     continue;
                 
                 queue.push([nr, nc, dist + 1]);
@@ -329,68 +339,55 @@ const GameLogic = {
     },
 
     traceLaser: (startLoc, direction, gameData) => {
+        // ... (Keep traceLaser exactly as it was in previous versions, omitted here for brevity but ensure it is preserved) ...
         let [r, c] = startLoc;
         let [dx, dy] = direction;
         let path = [[r, c]];
         let hits = [];
         let log = [];
         
-        // Clone game state for simulation
         const simGame = JSON.parse(JSON.stringify(gameData)); 
 
-        for (let i = 0; i < 40; i++) { // Max steps
+        for (let i = 0; i < 40; i++) {
             r += dx; c += dy;
             path.push([r, c]);
 
-            // 1. Wall Check
             const rOut = r < 0 || r >= CONSTANTS.BOARD_ROWS;
             const cOut = c < 0 || c >= CONSTANTS.BOARD_COLS;
 
-            // STOP if hitting Back Walls (Left/Right columns)
             if (cOut) {
                 log.push({ msg: "Laser escaped the system (MISS).", audience: "public" });
                 break; 
             }
 
-            // REFLECT if hitting Side Walls (Top/Bottom rows)
             if (rOut) {
-                // Check for perpendicular (dy === 0) vs. diagonal (dy !== 0) hit
-
-                if (dy === 0) { // Perpendicular hit
+                if (dy === 0) {
                     log.push({ msg: "Laser escaped the system (MISS).", audience: "public" });
-                    break; // Escape the system
-                } else { // Diagonal hit
+                    break; 
+                } else {
                     const [prevR, prevC] = path[path.length - 2];
-                    
-                    // Determine owner based on *previous* cell's column
                     let ownerIdx = -1;
                     if (gameData.players.length > 1) {
                         ownerIdx = (prevC < 5) ? 0 : 1;
                     } else {
-                        ownerIdx = 0; // Sandbox mode
+                        ownerIdx = 0; 
                     }
-
                     if (ownerIdx !== -1) {
                         log.push({ msg: "Laser reflected off side boundary.", audience: `p${ownerIdx}` });
                     }
-
                     r = prevR;
                     c = prevC + dy;
-
                     path[path.length - 1] = [r, c]; 
-
                     const cOut = c < 0 || c >= CONSTANTS.BOARD_COLS;
                     if (cOut) {
                         log.push({ msg: "Laser escaped the system (MISS).", audience: "public" });
                         break; 
                     }
-
                     dx = -dx; 
                     direction = [dx, dy];
                 }
             }
 
-            // 2. Unit Check
             const unit = GameLogic.getUnitAt(r, c, simGame);
             if (unit) {
                 const ownerName = simGame.players[unit.ownerIdx].displayName;
@@ -426,6 +423,167 @@ const GameLogic = {
             }
         }
         return { path, hits, log };
+    }
+};
+
+// ==========================================
+// 4.5 AI LOGIC
+// ==========================================
+const AILogic = {
+    computeTurn: (gameData, botIndex) => {
+        const myP = gameData.players[botIndex];
+        const actions = []; 
+        let turnBudget = gameData.turnBudget || 0;
+        let energyPool = gameData.energyPool || 0;
+
+        // Helper to check if a shot is "Bad"
+        // Returns: 'FATAL' | 'USELESS' | 'REPETITIVE' | 'OK'
+        const evaluateShot = (startLoc, dir, simState) => {
+            const { hits, path } = GameLogic.traceLaser(startLoc, dir, simState);
+            
+            // 1. FATAL: Hits own Nexus
+            if (hits.some(h => h.ownerIdx === botIndex && h.type === 'nexus')) return 'FATAL';
+
+            // 2. REPETITIVE: Hits the same mirror as last turn
+            const firstMirror = hits.find(h => h.type === 'mirror');
+            if (firstMirror) {
+                const key = `${firstMirror.location[0]},${firstMirror.location[1]}`;
+                if (State.botMemory.lastHitMirror === key) return 'REPETITIVE';
+            }
+
+            // 3. USELESS: Hits nothing AND exits immediately or goes backwards
+            if (hits.length === 0) {
+                // If path is super short (hit wall immediately)
+                if (path.length <= 2) return 'USELESS';
+                
+                // If vector is entering the void (e.g., shooting East from back row)
+                const lastPt = path[path.length - 1];
+                // Assuming Bot is P2 (Right side, > col 5)
+                // If laser ends further East than it started, it's probably useless
+                if (lastPt[1] > startLoc[1]) return 'USELESS';
+            }
+
+            return 'OK';
+        };
+
+        // --- 1. SETUP PHASE ---
+        if (!myP.nexusLocation) {
+            const r = Math.floor(Math.random() * CONSTANTS.BOARD_ROWS);
+            const c = Math.floor(Math.random() * 2) + 8; 
+            return { isSetup: true, nexusLoc: [r, c] };
+        }
+
+        // --- 2. MOVEMENT DECISION (Evasion or Unstuck) ---
+        let needsMove = State.botMemory.wasHitLastTurn;
+        
+        // Check if we are "Stuck" (All shots from current spot are bad)
+        if (!needsMove) {
+            const candidates = Object.values(CONSTANTS.DIRECTIONS);
+            const validShots = candidates.filter(d => evaluateShot(myP.nexusLocation, d, gameData) === 'OK');
+            if (validShots.length === 0) needsMove = true;
+        }
+
+        if (needsMove) {
+            let moved = false;
+            let attempts = 0;
+            while (!moved && attempts < 15) {
+                attempts++;
+                const r = Math.floor(Math.random() * CONSTANTS.BOARD_ROWS);
+                const c = Math.floor(Math.random() * 5) + 5; 
+                
+                if (r === myP.nexusLocation[0] && c === myP.nexusLocation[1]) continue;
+
+                if (GameLogic.isValidNexusMove(myP.nexusLocation, [r, c], botIndex, gameData, [])) {
+                    actions.push({
+                        action: 'moveNexus',
+                        prevLocation: myP.nexusLocation,
+                        location: [r, c]
+                    });
+                    myP.nexusLocation = [r,c]; // Update internal tracking
+                    moved = true;
+                    State.botMemory.wasHitLastTurn = false; 
+                }
+            }
+        }
+
+        // --- 3. BUILD PHASE ---
+        let buildAttempts = 0;
+        while (turnBudget > 0 && energyPool > 0 && buildAttempts < 10) {
+            buildAttempts++;
+            if (Math.random() > 0.5) continue; 
+
+            const r = Math.floor(Math.random() * CONSTANTS.BOARD_ROWS);
+            const c = Math.floor(Math.random() * 5) + 5; 
+
+            const unit = GameLogic.getUnitAt(r, c, gameData);
+            const isActionPlan = actions.some(a => a.location && a.location[0] === r && a.location[1] === c);
+            const isNexus = myP.nexusLocation[0] === r && myP.nexusLocation[1] === c;
+
+            if (!unit && !isActionPlan && !isNexus) {
+                const type = Math.random() > 0.5 ? 'pylon' : 'mirror';
+                const orientations = ['N', 'S', 'W', 'E', 'NW', 'NE', 'SW', 'SE'];
+                const orient = orientations[Math.floor(Math.random() * orientations.length)];
+
+                actions.push({
+                    action: 'build',
+                    type: type,
+                    location: [r, c],
+                    orientation: orient,
+                    cost: 1 
+                });
+                turnBudget--;
+                energyPool--;
+            }
+        }
+
+        // --- 4. ATTACK SELECTION ---
+        // Prepare Simulation State
+        const simGame = JSON.parse(JSON.stringify(gameData));
+        const simBot = simGame.players[botIndex];
+        
+        actions.forEach(a => {
+            if (a.action === 'build') {
+                simBot.buildings.push({ type: a.type, location: a.location, orientation: a.orientation, hp: 1 });
+            } else if (a.action === 'moveNexus') {
+                simBot.nexusLocation = a.location;
+            }
+        });
+
+        const allDirs = Object.values(CONSTANTS.DIRECTIONS);
+        // Sort random to keep it "Easy" but filter out bad stuff
+        allDirs.sort(() => Math.random() - 0.5);
+
+        let bestDir = null;
+        let firstOkDir = null;
+
+        for (let dir of allDirs) {
+            const quality = evaluateShot(simBot.nexusLocation, dir, simGame);
+            
+            if (quality === 'FATAL') continue; // Never self-kill
+            
+            if (quality === 'OK') {
+                if (!firstOkDir) firstOkDir = dir;
+                // Bias towards shooting West (Left) if possible
+                if (dir[1] === -1 || dir[1] === -0.5 || dir[1] === -2) { 
+                     // loosely favors directions with negative column delta
+                     bestDir = dir;
+                     break; 
+                }
+            }
+        }
+
+        // Decision:
+        // 1. Use Best/OK direction if found.
+        // 2. If only Repetitive/Useless options exist (but not fatal), SKIP ATTACK to save energy/time.
+        
+        const finalDir = bestDir || firstOkDir;
+
+        return {
+            isSetup: false,
+            actions: actions,
+            attackDir: finalDir, // Can be null
+            skipAttack: !finalDir
+        };
     }
 };
 
@@ -610,12 +768,59 @@ const API = {
                     nexusLocation: null,
                     nexusHP: parseInt(nexusHP) || CONSTANTS.NEXUS_HP, // New setting
                     buildings: [],
+                    escrow: 0,
                     isReady: true
                 }]
             };
             const ref = await addDoc(coll, gameData);
             API.game.listen(ref.id);
             return ref.id; // Return the new ID
+        },
+        // NEW: Fully Local Lobby Creation
+        createLocal: (energy, hp, diff, color) => {
+            // 1. Initialize State directly
+            State.game = {
+                isLocal: true, 
+                lobbyName: "Singleplayer",
+                status: 'waitingForHostStart',
+                phase: 'setup',
+                maxEnergy: parseInt(energy),
+                energyPool: parseInt(energy),
+                nexusHP: parseInt(hp),
+                fowDisabled: false, // NEW: Default to FOW enabled
+                turn: 0,
+                turnBudget: 0,
+                turnActions: [],
+                log: ["Local Match Created."],
+                players: [
+                    // ... (players array remains the same)
+                    {
+                        userId: 'ME',
+                        displayName: State.currentUser.profile.displayName,
+                        color: color,
+                        nexusLocation: null,
+                        nexusHP: parseInt(hp),
+                        buildings: [],
+                        isReady: true 
+                    },
+                    {
+                        userId: 'BOT',
+                        displayName: `Easy AI`,
+                        color: (color === 'Red' ? 'Blue' : 'Red'),
+                        nexusLocation: null,
+                        nexusHP: parseInt(hp),
+                        buildings: [],
+                        isBot: true,
+                        difficulty: diff,
+                        isReady: true
+                    }
+                ]
+            };
+            State.playerIndex = 0;
+            State.gameId = "LOCAL_MATCH"; 
+            
+            UIManager.show('waitingRoom');
+            UIManager.renderWaitingRoom();
         },
         join: async (gameId) => {
             const ref = doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', gameId);
@@ -722,14 +927,12 @@ const API = {
     },
 
     game: {
-        // NEW: Start Sandbox Game
         startSandbox: async (energy, nexusHP) => {
             const coll = collection(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games');
-            
             const gameData = {
                 lobbyName: "Sandbox Mode",
-                status: 'inProgress', // Start immediately
-                phase: 'setup', // Go to setup
+                status: 'inProgress',
+                phase: 'setup',
                 createdAt: Date.now(),
                 maxEnergy: parseInt(energy),
                 energyPool: parseInt(energy),
@@ -737,6 +940,7 @@ const API = {
                 pendingEnergyRefund: 0,
                 turn: 0,
                 lastShotVector: null,
+                turnActions: [],
                 log: [`Sandbox Mode started.`],
                 lastUpdated: Date.now(),
                 players: [{
@@ -746,7 +950,7 @@ const API = {
                     nexusLocation: null,
                     nexusHP: parseInt(nexusHP),
                     buildings: [],
-                    isReady: true // Only player is always ready
+                    isReady: true 
                 }]
             };
             const ref = await addDoc(coll, gameData);
@@ -768,7 +972,6 @@ const API = {
                 }
                 
                 const newData = snap.data();
-
                 const amIStillInGame = newData.players.some(p => p.userId === State.currentUser.uid);
                 
                 if (!amIStillInGame) {
@@ -778,13 +981,35 @@ const API = {
                     return;
                 }
 
-                // === Local function to update state and render ===
                 const updateAndRender = (dataToRender) => {
-                    // Check for race condition
-                    if (dataToRender.lastUpdated < State.game?.lastUpdated && State.game?.lastUpdated) { return; }
+                    // Context Switch Detection
+                    if (dataToRender.turn !== State.lastKnownTurn || dataToRender.phase !== State.lastKnownPhase) {
+                        State.currentAction = null;
+                        State.selectedLocation = null;
+                    }
+                    
+                    State.lastKnownTurn = dataToRender.turn;
+                    State.lastKnownPhase = dataToRender.phase;
 
-                    State.game = dataToRender; // Use the passed-in data
+                    State.serverState = JSON.parse(JSON.stringify(dataToRender));
+                    State.game = JSON.parse(JSON.stringify(dataToRender));
                     State.playerIndex = State.game.players.findIndex(p => p.userId === State.currentUser.uid);
+
+                    // --- AI TRIGGER LOGIC ---
+                    // Check if it is currently a Bot's turn
+                    const currentPlayer = State.game.players[State.game.turn];
+                    const isHost = State.playerIndex === 0; // Only Host executes AI logic to prevent double-writes
+                    
+                    if (isHost && currentPlayer && currentPlayer.isBot && State.game.status === 'inProgress') {
+                        // Small delay to simulate "thinking"
+                        setTimeout(() => {
+                            // Double check state hasn't changed during timeout
+                            if (State.game.turn === State.game.players.indexOf(currentPlayer)) {
+                                API.game.executeBotTurn();
+                            }
+                        }, 1000);
+                    }
+                    // ------------------------
 
                     if(State.game.status === 'inProgress' || State.game.status === 'gameOver') {
                         UIManager.show('game');
@@ -795,22 +1020,16 @@ const API = {
                     }
                 };
 
-                // === NEW ANIMATION TRIGGER ===
                 const needsAnimation = newData.lastLaserPath && newData.lastAttackId && 
-                                        (newData.lastAttackId !== State.game?.lastAttackId);
+                                      (newData.lastAttackId !== State.game?.lastAttackId);
 
                 if (needsAnimation) {
                     const pathArray = JSON.parse(newData.lastLaserPath);
                     const shooterIndex = (newData.turn + (newData.players.length - 1)) % newData.players.length;
                     const shooterColor = newData.players[shooterIndex] ? newData.players[shooterIndex].color : 'Red';
                     const shotVector = newData.lastShotVector;
-
-                    // Play animation *first*, using the OLD state.
-                    // Then, in the callback, update the state and render.
                     UIManager.animateLaser(pathArray, shooterColor, () => updateAndRender(newData), shotVector);
                 } else {
-                    // =============================
-                    // No animation, just update immediately
                     updateAndRender(newData);
                 }
             });
@@ -822,7 +1041,6 @@ const API = {
             API.presence.setStatus('Available');
         },
         
-        // --- Actions ---
         toggleReady: async () => {
             const newP = [...State.game.players];
             newP[State.playerIndex].isReady = !newP[State.playerIndex].isReady;
@@ -833,7 +1051,6 @@ const API = {
         },
         startGame: async () => {
             if (State.playerIndex !== 0) return UIManager.toast("Only the host can start the game.");
-            // 1. Deep Reset of Players (keep ID/Name/Color/Ready, wipe board data)
             const resetPlayers = State.game.players.map(p => ({
                 userId: p.userId,
                 displayName: p.displayName,
@@ -841,33 +1058,71 @@ const API = {
                 isReady: false,
                 nexusLocation: null,
                 nexusStartLoc: null,
-                nexusHP: State.game.nexusHP, // Use new setting from game state
+                nexusHP: State.game.nexusHP,
                 buildings: []
             }));
 
-            // 2. Push Full Reset Update
-            try {
-                await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                    status: 'inProgress', 
-                    phase: 'setup', 
-                    turn: 0, 
-                    energyPool: State.game.maxEnergy,
-                    pendingEnergyRefund: 0,
-                    lastShotVector: null,
-                    lastLaserPath: null,
-                    lastAttackId: null,
-                    turnBudget: 0,
-                    players: resetPlayers,
-                    lastUpdated: Date.now(),
-                    log: [`Game Started! State Reset.`]
-                });
-                console.log("Game start update succeeded.");
-            } catch (e) {
-                console.error("FIREBASE STTART GAME ERROR:", e);
-                UIManager.showError("Failed to start game. Check console/FireStore rules.");
-            }
+            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+                status: 'inProgress', 
+                phase: 'setup', 
+                turn: 0, 
+                energyPool: State.game.maxEnergy,
+                pendingEnergyRefund: 0,
+                lastShotVector: null,
+                lastLaserPath: null,
+                lastAttackId: null,
+                turnBudget: 0,
+                turnActions: [],
+                players: resetPlayers,
+                lastUpdated: Date.now(),
+                log: [`Game Started! State Reset.`]
+            });
+        },
+        // NEW: Start the Local Match
+        startLocalMatch: () => {
+            State.game.status = 'inProgress';
+            State.game.phase = 'setup';
+            State.game.turnBudget = 0;
+            State.serverState = JSON.parse(JSON.stringify(State.game)); // Snapshot
+            
+            UIManager.show('game');
+            UIManager.renderGame();
         },
         placeNexus: async (loc) => {
+            // NEW: Immediately lock controls to prevent double-clicks or lingering state
+            State.currentAction = null;
+            State.previewNexus = null;
+            UIManager.renderControls(0); // Force UI update to disable button immediately
+
+            if (State.game.isLocal) {
+                const p = State.game.players[State.playerIndex];
+                p.nexusLocation = loc;
+                p.nexusStartLoc = loc;
+                State.game.log.push("Nexus Placed.");
+                
+                // Check if bot needs to place (Bot places instantly in setup)
+                const bot = State.game.players[1];
+                if (bot && bot.isBot && !bot.nexusLocation) {
+                    const botData = AILogic.computeTurn(State.game, 1);
+                    bot.nexusLocation = botData.nexusLoc;
+                    bot.nexusStartLoc = botData.nexusLoc;
+                }
+
+                // Transition to BuyMove
+                if (p.nexusLocation && bot.nexusLocation) {
+                    State.game.phase = 'buyMove';
+                    State.game.energyPool = State.game.maxEnergy;
+                    State.game.turnBudget = Math.min(1, State.game.maxEnergy);
+                    State.game.log.push("Both Nexus placed. Phase: Buy/Move");
+                    
+                    // Snapshot for Reset Turn
+                    State.serverState = JSON.parse(JSON.stringify(State.game));
+                }
+                
+                UIManager.renderGame();
+                return; // DONE LOCAL
+            }
+
             const newP = JSON.parse(JSON.stringify(State.game.players));
             newP[State.playerIndex].nexusLocation = loc;
             newP[State.playerIndex].nexusStartLoc = loc;
@@ -875,79 +1130,175 @@ const API = {
             let updates = { players: newP, log: [...State.game.log, "Nexus Placed."] };
             updates.lastUpdated = Date.now();
             
-            // Check if both ready
             const p1 = newP[0];
-            const p2 = newP[1]; // Might be undefined in sandbox
+            const p2 = newP[1]; 
             
-            // MODIFIED: Check works for both 1-player and 2-player games
             if(p1.nexusLocation && (newP.length === 1 || p2?.nexusLocation)) {
                 updates.status = 'inProgress';
                 updates.phase = 'buyMove';
                 const newEnergyPool = State.game.maxEnergy;
                 updates.energyPool = newEnergyPool;
-                // Player 0 (turn 0) has 0 pylons. Budget = min(0 + 1, energyPool)
                 updates.turnBudget = Math.min(1, newEnergyPool);
+                updates.turnActions = [];
                 updates.log.push("All Nexus placed. Phase: Buy/Move");
             }
             await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
         },
-        confirmBuyMovePhase: async (buildingsToPlace, nexusMoveLocation) => {
-            const newP = JSON.parse(JSON.stringify(State.game.players));
-            const myP = newP[State.playerIndex];
 
-            let totalCost = 0;
-            let newLogs = [...State.game.log];
-            if (nexusMoveLocation) {
-                myP.nexusLocation = nexusMoveLocation;
-                newLogs.push(`Nexus moved.`);
+        // === LOCAL ONLY ACTIONS (No DB Writes) ===
+        
+        placeBuilding: (type, r, c, orientation = 'N') => {
+            const myP = State.game.players[State.playerIndex];
+            const isSandbox = State.game.players.length === 1;
+
+            // 1. Check for existing fresh building (Overwrite Logic)
+            const existingActionIndex = (State.game.turnActions || []).findIndex(a => 
+                a.action === 'build' && a.location[0] === r && a.location[1] === c
+            );
+
+            let refund = 0;
+            if (existingActionIndex !== -1) {
+                const oldAction = State.game.turnActions[existingActionIndex];
+                refund = oldAction.cost;
+                
+                // Remove old action from history
+                State.game.turnActions.splice(existingActionIndex, 1);
+                
+                // Remove old building from board
+                myP.buildings = myP.buildings.filter(b => !(b.location[0] === r && b.location[1] === c));
             }
 
-            buildingsToPlace.forEach(b => {
-                const newBuilding = { type: b.type, location: b.location, hp: CONSTANTS.BUILDING_HP };
-                if (b.type === 'mirror') {
-                    newBuilding.orientation = b.orientation || 'N';
-                    newLogs.push(`Placed ${newBuilding.orientation} Mirror.`);
-                } else {
-                    newLogs.push(`Placed ${b.type}.`);
-                }
-                myP.buildings.push(newBuilding);
-                totalCost += 1; // Still count for logs, but we'll zero it out
-            });
+            // 2. Cost Check (taking refund into account)
+            const currentBudget = (State.game.turnBudget || 0) + refund;
+            const currentEnergy = (State.game.energyPool || 0) + refund;
+            
+            if (!isSandbox && (currentBudget < 1 || currentEnergy < 1)) {
+                // Revert refund if failed (though UI shouldn't allow this click usually)
+                return UIManager.toast("Insufficient budget or energy.");
+            }
 
-            // ADD THIS BLOCK
+            // 3. Update Local State
+            const newBuilding = { type, location: [r,c], hp: CONSTANTS.BUILDING_HP };
+            if (type === 'mirror') newBuilding.orientation = orientation;
+            
+            myP.buildings.push(newBuilding);
+
+            const cost = isSandbox ? 0 : 1;
+            
+            State.game.turnBudget = currentBudget - cost;
+            State.game.energyPool = currentEnergy - cost;
+            
+            if (!State.game.turnActions) State.game.turnActions = [];
+            State.game.turnActions.push({ action: 'build', type, location: [r,c], cost });
+
+            UIManager.renderGame(); 
+        },
+
+        moveNexus: (r, c) => {
+            const myP = State.game.players[State.playerIndex];
+            const oldLoc = myP.nexusLocation;
+
+            myP.nexusLocation = [r, c];
+            
+            if (!State.game.turnActions) State.game.turnActions = [];
+            State.game.turnActions.push({ action: 'moveNexus', prevLocation: oldLoc });
+
+            UIManager.renderGame();
+        },
+
+        resetTurn: () => {
+            if (!State.serverState) return;
+            State.game = JSON.parse(JSON.stringify(State.serverState));
+            
+            // NEW: Clear controls on reset
+            State.currentAction = null;
+            State.selectedLocation = null;
+            
+            UIManager.toast("Turn reset.");
+            UIManager.renderGame();
+        },
+
+        endPhase: () => {
+            State.game.phase = 'attack';
+            
+            // NEW: Clear controls so "Place Mirror" doesn't persist into Attack Mode
+            State.currentAction = null;
+            State.selectedLocation = null;
+            
+            UIManager.renderGame();
+        },
+
+        cancelAttack: () => {
+            State.game.phase = 'buyMove';
+            
+            // NEW: Clear controls so we return to a neutral state
+            State.currentAction = null;
+            State.selectedLocation = null;
+            
+            UIManager.renderGame();
+        },
+
+        // === COMMIT ACTIONS (Writes to DB) ===
+
+        commitAndEndTurn: async () => {
+            State.currentAction = null;
+            State.selectedLocation = null;
+            State.previewNexus = null; 
+            UIManager.renderGame();
+
+            const currentG = State.game;
+            const newP = currentG.players;
+            const nextTurn = (currentG.turn + 1) % newP.length;
+            
+            const nextPlayer = newP[nextTurn];
+            if(nextPlayer?.nexusLocation) nextPlayer.nexusStartLoc = nextPlayer.nexusLocation;
+
+            // --- ESCROW LOGIC (Safety Patch) ---
+            const currentPool = Number(currentG.energyPool) || 0; // Safety cast
+            const escrowRefund = Number(nextPlayer.escrow) || 0;  // Safety cast
+            nextPlayer.escrow = 0; 
+            const newEnergyPool = currentPool + escrowRefund;
+            // -----------------------------------
+
+            const nextPlayerPylons = nextPlayer?.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
             const isSandbox = newP.length === 1;
-            const finalCost = isSandbox ? 0 : totalCost;
-            if (isSandbox && totalCost > 0) {
-                newLogs.push(`Placed ${totalCost} buildings (free).`);
-            }
-            // END ADD
+            const newTurnBudget = isSandbox ? 99 : Math.min(nextPlayerPylons + 1, newEnergyPool);
 
-            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                players: newP,
-                // MODIFY THIS LINE
-                energyPool: (State.game.energyPool - finalCost) + State.game.pendingEnergyRefund,
-                // MODIFY THIS LINE
-                turnBudget: State.game.turnBudget - finalCost,
-                phase: 'attack',
-                pendingEnergyRefund: 0,
+            const updates = {
+                turn: nextTurn,
+                phase: 'buyMove',
+                energyPool: newEnergyPool,
+                turnBudget: newTurnBudget,
+                pendingEnergyRefund: 0, 
+                turnActions: [], 
+                lastShotVector: null,
+                lastLaserPath: null,
+                lastAttackId: null,
+                players: newP, 
                 lastUpdated: Date.now(),
-                log: [...newLogs, "Attack Phase."]
-            });
+                log: [...currentG.log, `${State.currentUser.profile.displayName} ended turn.`]
+            };
+
+            if (currentG.isLocal) {
+                Object.assign(State.game, updates);
+                State.serverState = JSON.parse(JSON.stringify(State.game));
+                UIManager.renderGame();
+                if (newP[nextTurn].isBot) {
+                    setTimeout(() => API.game.executeBotTurn(), 1000);
+                }
+                return;
+            }
+
+            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
         },
-        endPhase: async () => {
-            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                phase: 'attack',
-                lastUpdated: Date.now(),
-                log: [...State.game.log, "Attack Phase."]
-            });
-        },
+
         attack: async (dx, dy) => {
             try {
-                const startLoc = State.game.players[State.playerIndex].nexusLocation;
-                const { path, hits, log } = GameLogic.traceLaser(startLoc, [dx, dy], State.game);
+                const currentG = State.game;
+                const startLoc = currentG.players[State.playerIndex].nexusLocation;
+                const { path, hits, log } = GameLogic.traceLaser(startLoc, [dx, dy], currentG);
                 
-                // Apply Damage
-                const newP = JSON.parse(JSON.stringify(State.game.players));
+                const newP = JSON.parse(JSON.stringify(currentG.players));
                 let destroyedCount = 0;
                 let gameOver = false;
                 let winner = -1;
@@ -955,6 +1306,7 @@ const API = {
                 hits.forEach(h => {
                     if (h.type === 'nexus') {
                         newP[h.ownerIdx].nexusHP--;
+                        if (newP[h.ownerIdx].isBot) State.botMemory.wasHitLastTurn = true;
                         if(newP[h.ownerIdx].nexusHP <= 0) { 
                             gameOver = true; 
                             winner = (h.ownerIdx + 1) % newP.length; 
@@ -967,35 +1319,61 @@ const API = {
                     }
                 });
 
-                const nextTurn = (State.game.turn + 1) % newP.length;
-                // Apply refunds
-                const nextPool = State.game.energyPool;
+                // --- ESCROW LOGIC (Safety Patch) ---
+                const shooterIdx = State.playerIndex;
+                const currentEscrow = Number(newP[shooterIdx].escrow) || 0;
+                newP[shooterIdx].escrow = currentEscrow + destroyedCount;
+                // -----------------------------------
 
-                // Calculate next player's budget
+                const nextTurn = (currentG.turn + 1) % newP.length;
                 const nextPlayer = newP[nextTurn];
-                const nextPlayerPylons = nextPlayer?.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
-                const newTurnBudget = Math.min(nextPlayerPylons + 1, nextPool);
-                
                 if(nextPlayer?.nexusLocation) nextPlayer.nexusStartLoc = nextPlayer.nexusLocation;
 
+                // --- POOL CALCULATION (Safety Patch) ---
+                const escrowRelease = Number(nextPlayer.escrow) || 0;
+                nextPlayer.escrow = 0;
+                
+                const currentPoolAfterSpend = Number(currentG.energyPool) || 0; 
+                const newEnergyPool = currentPoolAfterSpend + escrowRelease;
+                // ---------------------------------------
+
+                const nextPlayerPylons = nextPlayer?.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
+                const isSandbox = newP.length === 1;
+                const newTurnBudget = isSandbox ? 99 : Math.min(nextPlayerPylons + 1, newEnergyPool);
+
                 let updates = {
-                    players: newP,
-                    log: [...State.game.log, ...log],
+                    players: newP, 
+                    log: [...currentG.log, ...log],
                     lastShotVector: [dx, dy],
                     lastLaserPath: JSON.stringify(path),
                     lastAttackId: Date.now(),
                     lastUpdated: Date.now(),
                     turn: nextTurn,
                     phase: 'buyMove',
-                    energyPool: nextPool,
+                    energyPool: newEnergyPool, 
                     turnBudget: newTurnBudget,
-                    pendingEnergyRefund: destroyedCount
+                    turnActions: [],
+                    pendingEnergyRefund: 0 
                 };
                 
                 if(gameOver) {
                     updates.status = 'gameOver';
                     updates.winner = winner;
                     updates.log.push("GAME OVER!");
+                }
+
+                if (currentG.isLocal) {
+                    Object.assign(State.game, updates);
+                    State.serverState = JSON.parse(JSON.stringify(State.game)); 
+                    
+                    const shooterColor = currentG.players[State.playerIndex].color;
+                    UIManager.animateLaser(path, shooterColor, () => {
+                        UIManager.renderGame();
+                        if (!gameOver && newP[nextTurn].isBot) {
+                            setTimeout(() => API.game.executeBotTurn(), 1000);
+                        }
+                    }, [dx, dy]);
+                    return;
                 }
 
                 await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
@@ -1005,17 +1383,25 @@ const API = {
                 UIManager.toast("Error attacking: " + err.message);
             }
         },
+
         skipAttack: async () => {
-            const newP = JSON.parse(JSON.stringify(State.game.players));
-            const nextTurn = (State.game.turn + 1) % newP.length;
+            const currentG = State.game;
+            const newP = JSON.parse(JSON.stringify(currentG.players));
+            const nextTurn = (currentG.turn + 1) % newP.length;
             const nextPlayer = newP[nextTurn];
             if(nextPlayer?.nexusLocation) nextPlayer.nexusStartLoc = nextPlayer.nexusLocation;
             
-            const newEnergyPool = State.game.energyPool + State.game.pendingEnergyRefund;
-            const nextPlayerPylons = nextPlayer?.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
-            const newTurnBudget = Math.min(nextPlayerPylons + 1, newEnergyPool);
+            // --- ESCROW LOGIC ---
+            const escrowRelease = Number(nextPlayer.escrow) || 0;
+            nextPlayer.escrow = 0;
+            const newEnergyPool = (Number(currentG.energyPool) || 0) + escrowRelease;
+            // --------------------
 
-            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+            const nextPlayerPylons = nextPlayer?.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
+            const isSandbox = newP.length === 1;
+            const newTurnBudget = isSandbox ? 99 : Math.min(nextPlayerPylons + 1, newEnergyPool);
+
+            const updates = {
                 turn: nextTurn,
                 phase: 'buyMove',
                 energyPool: newEnergyPool,
@@ -1024,81 +1410,177 @@ const API = {
                 lastShotVector: null,
                 lastLaserPath: null,
                 lastAttackId: null,
+                turnActions: [],
                 players: newP,
                 lastUpdated: Date.now(),
-                log: [...State.game.log, "Attack Skipped."]
-            });
-        },
-        cancelAttack: async () => {
-            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                phase: 'buyMove',
-                lastUpdated: Date.now(),
-                log: [...State.game.log, "Attack canceled."]
-            });
-        },
-        commitAndEndTurn: async (buildingsToPlace, nexusMoveLocation) => {
-            const newP = JSON.parse(JSON.stringify(State.game.players));
-            const myP = newP[State.playerIndex];
-            let newLogs = [...State.game.log];
-            let totalCost = 0;
+                log: [...currentG.log, "Attack Skipped."]
+            };
 
-            // 1. Apply Previews
-            if (nexusMoveLocation) {
-                myP.nexusLocation = nexusMoveLocation;
-                newLogs.push(`Nexus moved.`);
-            }
-            buildingsToPlace.forEach(b => {
-                const newBuilding = { type: b.type, location: b.location, hp: CONSTANTS.BUILDING_HP };
-                if (b.type === 'mirror') {
-                    newBuilding.orientation = b.orientation || 'N';
-                    newLogs.push(`Placed ${newBuilding.orientation} Mirror.`);
-                } else {
-                    newLogs.push(`Placed ${b.type}.`);
+            if (currentG.isLocal) {
+                Object.assign(State.game, updates);
+                State.serverState = JSON.parse(JSON.stringify(State.game));
+                State.currentAction = null;
+                State.selectedLocation = null;
+                UIManager.renderGame();
+                if (newP[nextTurn].isBot) {
+                    setTimeout(() => API.game.executeBotTurn(), 1000);
                 }
-                myP.buildings.push(newBuilding);
-                totalCost += 1;
-            });
-            if (buildingsToPlace.length > 0) {
-                newLogs.push(`Buildings placed. Total cost: ${totalCost}`);
+                return;
             }
-            newLogs.push(`${myP.displayName} skipped the attack phase.`);
 
-            // 2. End Turn Logic (from skipAttack)
-            const isSandbox = newP.length === 1;
-            const finalCost = isSandbox ? 0 : totalCost;
+            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
+        },
 
-            const nextTurn = (State.game.turn + 1) % newP.length;
-            const nextPlayer = newP[nextTurn];
+        // AI EXECUTION
+        executeBotTurn: async () => {
+            const g = State.game;
+            const botIdx = g.turn;
+            const botData = AILogic.computeTurn(g, botIdx);
+            
+            if (g.phase === 'setup') {
+                return;
+            }
+
+            const simGame = JSON.parse(JSON.stringify(g));
+            const botP = simGame.players[botIdx];
+            
+            let spend = 0;
+
+            // Process Actions
+            botData.actions.forEach(act => {
+                if (act.action === 'build') {
+                    botP.buildings.push({ 
+                        type: act.type, 
+                        location: act.location, 
+                        orientation: act.orientation,
+                        hp: CONSTANTS.BUILDING_HP 
+                    });
+                    spend += (Number(act.cost) || 0);
+                } 
+                else if (act.action === 'moveNexus') {
+                    botP.nexusLocation = act.location;
+                    botP.nexusStartLoc = act.location;
+                }
+            });
+
+            // --- HANDLING ATTACK VS SKIP ---
+            
+            let path = null;
+            let destroyedCount = 0;
+            let gameOver = false;
+            let winner = -1;
+            let attackDir = null;
+
+            if (botData.skipAttack) {
+                // SKIP LOGIC
+                // We don't fire a laser. We calculate refund immediately.
+                // (Refund for next player logic happens below)
+            } else {
+                // ATTACK LOGIC
+                attackDir = botData.attackDir;
+                const startLoc = botP.nexusLocation;
+                const trace = GameLogic.traceLaser(startLoc, attackDir, simGame);
+                path = trace.path;
+                
+                // Store Mirror Hit Memory
+                const mirrorHit = trace.hits.find(h => h.type === 'mirror');
+                if (mirrorHit) {
+                    State.botMemory.lastHitMirror = `${mirrorHit.location[0]},${mirrorHit.location[1]}`;
+                } else {
+                    State.botMemory.lastHitMirror = null;
+                }
+
+                trace.hits.forEach(h => {
+                    if (h.type === 'nexus') {
+                        simGame.players[h.ownerIdx].nexusHP--;
+                        if(simGame.players[h.ownerIdx].nexusHP <= 0) { 
+                            gameOver = true; 
+                            winner = (h.ownerIdx + 1) % simGame.players.length; 
+                        }
+                    } else {
+                        simGame.players[h.ownerIdx].buildings = simGame.players[h.ownerIdx].buildings.filter(b => 
+                            !(b.location[0] === h.location[0] && b.location[1] === h.location[1])
+                        );
+                        destroyedCount++;
+                    }
+                });
+            }
+
+            // --- ESCROW & POOL LOGIC ---
+            const currentBotEscrow = Number(botP.escrow) || 0;
+            botP.escrow = currentBotEscrow + destroyedCount;
+
+            const nextTurn = (g.turn + 1) % g.players.length;
+            const nextPlayer = simGame.players[nextTurn];
             if(nextPlayer?.nexusLocation) nextPlayer.nexusStartLoc = nextPlayer.nexusLocation;
 
-            const newEnergyPool = (State.game.energyPool - finalCost) + State.game.pendingEnergyRefund;
-            const nextPlayerPylons = nextPlayer?.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
-            const newTurnBudget = isSandbox ? 99 : Math.min(nextPlayerPylons + 1, newEnergyPool);
+            const escrowRelease = Number(nextPlayer.escrow) || 0;
+            nextPlayer.escrow = 0;
+            
+            const startPool = Number(g.energyPool) || 0;
+            // If skipping attack, we spent 'spend' on buildings, but no laser logic change
+            // If attacking, 'spend' on buildings + destroyedCount goes to escrow (handled above)
+            
+            const currentPoolAfterSpend = startPool - spend;
+            const newEnergyPool = currentPoolAfterSpend + escrowRelease;
 
-            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
+            const nextPlayerPylons = nextPlayer?.buildings ? nextPlayer.buildings.filter(b => b.type === 'pylon').length : 0;
+            const newTurnBudget = Math.min(nextPlayerPylons + 1, newEnergyPool); 
+
+            let updates = {
+                players: simGame.players,
+                log: [...g.log, botData.skipAttack ? "Bot skipped attack." : "Bot acts..."],
+                lastShotVector: attackDir,
+                lastLaserPath: path ? JSON.stringify(path) : null,
+                lastAttackId: Date.now(),
+                lastUpdated: Date.now(),
                 turn: nextTurn,
                 phase: 'buyMove',
                 energyPool: newEnergyPool,
                 turnBudget: newTurnBudget,
-                pendingEnergyRefund: 0, 
-                lastShotVector: null,
-                lastLaserPath: null,
-                lastAttackId: null,
-                players: newP,
-                lastUpdated: Date.now(),
-                log: newLogs
-            });
+                turnActions: [],
+                pendingEnergyRefund: 0 
+            };
+
+            if(gameOver) {
+                updates.status = 'gameOver';
+                updates.winner = winner;
+                updates.log.push("GAME OVER!");
+            }
+
+            if (g.isLocal) {
+                Object.assign(State.game, updates);
+                State.serverState = JSON.parse(JSON.stringify(State.game));
+                
+                if (!botData.skipAttack && path) {
+                    const botColor = g.players[botIdx].color;
+                    UIManager.animateLaser(path, botColor, () => {
+                        UIManager.renderGame();
+                    }, attackDir);
+                } else {
+                    // Immediate render if skipped
+                    UIManager.renderGame();
+                }
+                return;
+            }
+
+            await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), updates);
         },
 
-        // MODIFIED: To accept newNexusHP
-        updateSettings: async (newName, newEnergy, newNexusHP) => {
-            if (State.playerIndex !== 0) return; // Host only
+        // Settings updates
+        updateSettings: async (newName, newEnergy, newNexusHP, newDifficulty) => {
+            if (State.playerIndex !== 0) return; 
 
             const newP = JSON.parse(JSON.stringify(State.game.players));
             let newLogs = [...State.game.log];
 
-            if (newP[1]) {
-                newP[1].isReady = false; // Un-ready the guest
+            // If P2 is a bot, update its difficulty/name
+            if (newP[1] && newP[1].isBot) {
+                newP[1].difficulty = newDifficulty;
+                newP[1].displayName = `Bot (${newDifficulty})`;
+                newLogs.push(`Host changed difficulty to ${newDifficulty}.`);
+            } else if (newP[1]) {
+                newP[1].isReady = false; 
                 newLogs.push("Host changed settings. Guest un-readied.");
             } else {
                 newLogs.push("Host changed settings.");
@@ -1107,22 +1589,19 @@ const API = {
             await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
                 lobbyName: newName,
                 maxEnergy: parseInt(newEnergy),
-                energyPool: parseInt(newEnergy), // Also update the pool to match
-                nexusHP: parseInt(newNexusHP), // New Setting
+                energyPool: parseInt(newEnergy), 
+                nexusHP: parseInt(newNexusHP),
                 players: newP,
                 lastUpdated: Date.now(),
                 log: newLogs
             });
         },
-
         kickGuest: async () => {
-            if (State.playerIndex !== 0 || State.game.players.length < 2) return; // Host only
-
+            if (State.playerIndex !== 0 || State.game.players.length < 2) return; 
             const hostPlayer = State.game.players[0];
-            hostPlayer.isReady = false; // Reset host ready state
-
+            hostPlayer.isReady = false; 
             await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), {
-                players: [hostPlayer], // Set players array to only host
+                players: [hostPlayer], 
                 status: 'waitingForOpponent',
                 lastUpdated: Date.now(),
                 log: [...State.game.log, `${State.game.players[1].displayName} was kicked by the host.`]
@@ -1242,145 +1721,195 @@ const UIManager = {
         DOM.views.modal.classList.remove('hidden');
     },
     
-    // MODIFIED: To include Nexus HP settings
     renderWaitingRoom: () => {
         const g = State.game;
         const p1 = g.players[0];
-        const p2 = g.players[1];
+        const p2 = g.players[1]; 
         const isHost = State.playerIndex === 0;
+        const isBotGame = p2 && p2.isBot;
+        const isLocal = g.isLocal;
 
-        // === Host Settings Panel ===
+        // === 1. Layout & Visibility Adjustments ===
+        
+        // Hide Sidebar & Lobby Name for Local/AI Games
+        const sidebar = DOM.$('#waiting-room-view > div:last-child'); 
+        if (sidebar) sidebar.classList.toggle('hidden', isBotGame || isLocal);
+        const lobbyNameContainer = DOM.$('#lobby-name-container');
+        if (lobbyNameContainer) lobbyNameContainer.classList.toggle('hidden', isBotGame || isLocal);
+        
+        // AI Specific Containers
+        const aiDiffContainer = DOM.$('#ai-difficulty-container');
+        const fowContainer = DOM.$('#ai-fow-container'); 
+        
+        // STRICT VISIBILITY CHECK: Only show in Bot Games
+        if (isBotGame) {
+            aiDiffContainer.classList.remove('hidden');
+            fowContainer.classList.remove('hidden');
+        } else {
+            aiDiffContainer.classList.add('hidden');
+            fowContainer.classList.add('hidden');
+        }
+
+        // === 2. Settings Panel ===
         const hostPanel = DOM.$('#host-settings-panel');
         const lobbyNameInput = DOM.$('#waiting-lobby-name-input');
         const energySelect = DOM.$('#waiting-energy-pool-select');
-        const nexusHpSelect = DOM.waitingNexusHpSelect; // From Cache
+        const nexusHpSelect = DOM.waitingNexusHpSelect; 
+        const aiDiffSelect = DOM.$('#waiting-ai-difficulty-select'); 
+        const fowCheckbox = DOM.$('#waiting-fow-checkbox'); 
+
+        hostPanel.classList.remove('hidden');
+        
+        lobbyNameInput.value = g.lobbyName;
+        energySelect.value = g.maxEnergy;
+        nexusHpSelect.value = g.nexusHP;
+        if(isBotGame) aiDiffSelect.value = g.players[1].difficulty || 'Easy';
+        fowCheckbox.checked = g.fowDisabled || false;
+
+        // Enable Inputs based on Host/Mode
+        // Host can always edit energy/HP. 
+        // Name is disabled in AI/Local. 
+        // Diff/FOW disabled in Multiplayer.
+        
+        lobbyNameInput.disabled = !isHost || isBotGame || isLocal;
+        energySelect.disabled = !isHost;
+        nexusHpSelect.disabled = !isHost;
+        aiDiffSelect.disabled = !isHost;
+        fowCheckbox.disabled = !isHost;
 
         if (isHost) {
-            hostPanel.classList.remove('hidden');
-            lobbyNameInput.disabled = false;
-            energySelect.disabled = false;
-            nexusHpSelect.disabled = false; // Enable HP select
-            
-            lobbyNameInput.value = g.lobbyName;
-            energySelect.value = g.maxEnergy;
-            nexusHpSelect.value = g.nexusHP; // Set HP value
-
-            // Add event listeners that update settings and un-ready P2
             const updateSettings = () => {
-                API.game.updateSettings(lobbyNameInput.value, energySelect.value, nexusHpSelect.value);
+                // In Local mode, we update state directly
+                if (isLocal) {
+                    g.maxEnergy = parseInt(energySelect.value);
+                    g.energyPool = parseInt(energySelect.value);
+                    g.nexusHP = parseInt(nexusHpSelect.value);
+                    g.fowDisabled = fowCheckbox.checked;
+                    if (p2) {
+                        p2.difficulty = aiDiffSelect.value;
+                        p2.nexusHP = g.nexusHP;
+                        p1.nexusHP = g.nexusHP;
+                    }
+                    UIManager.renderWaitingRoom();
+                } else {
+                    // In Firebase mode, we call the API
+                    API.game.updateSettings(lobbyNameInput.value, energySelect.value, nexusHpSelect.value, aiDiffSelect.value);
+                }
             };
             lobbyNameInput.onchange = updateSettings;
             energySelect.onchange = updateSettings;
-            nexusHpSelect.onchange = updateSettings; // Add handler
-
+            nexusHpSelect.onchange = updateSettings;
+            aiDiffSelect.onchange = updateSettings;
+            fowCheckbox.onchange = updateSettings;
         } else {
-            // Guest just sees the panel, but disabled
-            hostPanel.classList.remove('hidden');
-            lobbyNameInput.value = g.lobbyName;
-            energySelect.value = g.maxEnergy;
-            nexusHpSelect.value = g.nexusHP; // Set HP value
+            // Guest: All Disabled
             lobbyNameInput.disabled = true;
             energySelect.disabled = true;
-            nexusHpSelect.disabled = true; // Disable HP select
+            nexusHpSelect.disabled = true;
+            aiDiffSelect.disabled = true;
+            fowCheckbox.disabled = true;
         }
 
+        // === 3. Player Boxes (Standardized) ===
         DOM.$('#waiting-lobby-name').textContent = g.lobbyName;
 
-        // Helper to render player box
-        const renderBox = (p, prefix, isMe) => {
+        const renderBox = (p, prefix, index) => {
             const nameEl = DOM.$(`#${prefix}-name`);
             const rInd = DOM.$(`#${prefix}-ready-indicator`);
             const sel = DOM.$(`#${prefix}-color-select`);
-            
             const kickBtn = DOM.$('#kick-p2-btn');
+
+            // Default hidden state
+            rInd.classList.add('hidden');
+            sel.classList.add('hidden');
+            kickBtn.classList.add('hidden');
 
             if(!p) {
                 nameEl.textContent = "Empty"; 
                 nameEl.classList.add('text-gray-500');
-                rInd.classList.add('hidden'); 
-                sel.classList.add('hidden');
-                if (prefix === 'p2') kickBtn.classList.add('hidden'); // Hide kick button if no P2
                 return;
             }
+
+            const isMe = index === State.playerIndex;
+            const isMyBot = isHost && p.isBot; 
 
             nameEl.textContent = p.displayName + (isMe ? " (You)" : "");
             nameEl.classList.remove('text-gray-500');
             
-            if (prefix === 'p1') {
-                rInd.textContent = "HOST";
-                rInd.className = "mt-2 text-xs font-bold text-cyan-500 uppercase tracking-widest";
-            } else {
-                rInd.classList.remove('hidden');
-                rInd.textContent = p.isReady ? "READY" : "NOT READY";
-                rInd.className = p.isReady ? "mt-2 text-xs font-bold text-green-500 uppercase tracking-widest" : "mt-2 text-xs font-bold text-red-500 uppercase tracking-widest";
-
-                // Show/bind kick button
-                if (isHost) {
-                    kickBtn.classList.remove('hidden');
-                    kickBtn.onclick = API.game.kickGuest;
-                } else {
-                    kickBtn.classList.add('hidden');
-                }
-            }
-            
+            // Color Selector
             sel.classList.remove('hidden');
             if (sel.options.length === 0) UIManager.populateColors(sel);
             sel.value = p.color;
-            sel.disabled = !isMe; // Can only change your own color
-            if(isMe) {
+            sel.disabled = !(isMe || isMyBot); 
+
+            if(isMe || isMyBot) {
                 sel.onchange = async (e) => {
                     const newP = [...State.game.players];
-                    const otherPlayer = newP[(State.playerIndex + 1) % 2];
-                    
-                    // Color Exclusivity Check
+                    const otherPlayer = newP[(index + 1) % 2];
                     if (otherPlayer && otherPlayer.color === e.target.value) {
                         UIManager.toast("Color is already taken!");
-                        e.target.value = p.color; // Revert
+                        e.target.value = p.color; 
                         return;
                     }
-                    
-                    newP[State.playerIndex].color = e.target.value;
-                    await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), { players: newP });
+                    newP[index].color = e.target.value;
+                    // Only update DB if not local (Local updates happen in memory via ref, but we should re-render)
+                    if (isLocal) UIManager.renderWaitingRoom();
+                    else await updateDoc(doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId), { players: newP });
                 };
+            }
+
+            // Status Indicators (Hidden for Bot/Local games for cleanliness)
+            if (!isBotGame && !isLocal) {
+                rInd.classList.remove('hidden');
+                if (prefix === 'p1') {
+                    rInd.textContent = "HOST";
+                    rInd.className = "mt-2 text-xs font-bold text-cyan-500 uppercase tracking-widest";
+                } else {
+                    rInd.textContent = p.isReady ? "READY" : "NOT READY";
+                    rInd.className = p.isReady ? "mt-2 text-xs font-bold text-green-500 uppercase tracking-widest" : "mt-2 text-xs font-bold text-red-500 uppercase tracking-widest";
+                    if (isHost) {
+                        kickBtn.classList.remove('hidden');
+                        kickBtn.onclick = API.game.kickGuest;
+                    }
+                }
             }
         };
         
-        renderBox(p1, 'p1', State.playerIndex === 0);
-        renderBox(p2, 'p2', State.playerIndex === 1);
+        renderBox(p1, 'p1', 0);
+        renderBox(p2, 'p2', 1);
         
-        // Main Button Logic
+        // === 4. Main Button ===
         const mainBtn = DOM.$('#start-game-btn');
+        mainBtn.classList.remove('hidden');
         
-        if(isHost) {
-            // Host Logic: Start Game
-            const p2Ready = p2 && p2.isReady;
-            mainBtn.textContent = p2Ready ? "Start Game" : (p2 ? "Waiting for Guest..." : "Waiting for Player...");
-            mainBtn.disabled = !p2Ready;
-            mainBtn.onclick = API.game.startGame;
-            
-            mainBtn.className = `w-full font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg mb-3 ${p2Ready ? 'bg-green-600 hover:bg-green-500 text-white cursor-pointer' : 'bg-gray-700 text-gray-400 cursor-not-allowed opacity-75'}`;
-        } else if (State.playerIndex === 1) { // Check if guest
-            // Guest Logic: Toggle Ready
+        if (isHost) {
+            if (isBotGame || isLocal) {
+                mainBtn.textContent = "Start Match";
+                mainBtn.disabled = false;
+                mainBtn.className = "w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg mb-3 cursor-pointer";
+                // Direct mapping based on mode
+                mainBtn.onclick = isLocal ? API.game.startLocalMatch : API.game.startGame;
+            } else {
+                const p2Ready = p2 && p2.isReady;
+                mainBtn.textContent = p2Ready ? "Start Game" : (p2 ? "Waiting for Guest..." : "Waiting for Player...");
+                mainBtn.disabled = !p2Ready;
+                mainBtn.className = `w-full font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg mb-3 ${p2Ready ? 'bg-green-600 hover:bg-green-500 text-white cursor-pointer' : 'bg-gray-700 text-gray-400 cursor-not-allowed opacity-75'}`;
+                mainBtn.onclick = API.game.startGame;
+            }
+        } else if (State.playerIndex === 1) { 
             const amIReady = g.players[State.playerIndex].isReady;
             mainBtn.textContent = amIReady ? "Cancel Ready" : "Ready Up";
             mainBtn.disabled = false;
-            mainBtn.onclick = API.game.toggleReady; // Guest's job is always to toggle ready
-
+            mainBtn.onclick = API.game.toggleReady; 
             mainBtn.className = `w-full font-bold py-3 px-4 rounded-lg text-lg transition-all shadow-lg mb-3 cursor-pointer ${amIReady ? 'bg-yellow-600 hover:bg-yellow-500 text-white' : 'bg-green-600 hover:bg-green-500 text-white'}`;
         } else {
-            // This handles non-host, non-guest (i.e., should not happen in 2-player, but good fallback)
             mainBtn.classList.add('hidden');
         }
     },
     
     renderGame: () => {
-        if (State.game.phase !== 'buyMove' || State.game.turn !== State.playerIndex) {
-            State.previewBuildings = [];
-            State.previewCost = 0;
-            State.previewNexusLocation = null;
-            State.currentAction = null;
-        }
-
+        // Note: We removed the preview reset block from here because state is now persistent locally
+        
         const g = State.game;
         const myP = g.players[State.playerIndex];
         if(!myP) return; 
@@ -1406,20 +1935,25 @@ const UIManager = {
         } else {
             DOM.opponentHudInfo.innerHTML = `<span class="text-gray-500">Sandbox Mode</span>`;
         }
-        // 3. Set Turn Indicator
+        
+        // 3. Set Turn Indicator & Phase (NEW LOGIC)
         if(isMyTurn) {
             DOM.playerHudLabel.textContent = "Current Turn";
             DOM.playerHudLabel.className = "text-xs text-yellow-300 animate-pulse block";
             DOM.opponentHudLabel.textContent = opponentP ? "Opponent" : "---";
             DOM.opponentHudLabel.className = "text-xs text-gray-400 block";
+            
+            // Show actual phase if it's my turn
+            DOM.phase.textContent = g.phase === 'buyMove' ? 'Planning' : 'Targeting';
         } else {
             DOM.playerHudLabel.textContent = "You Are";
             DOM.playerHudLabel.className = "text-xs text-gray-400 block";
             DOM.opponentHudLabel.textContent = opponentP ? "Current Turn" : "---";
             DOM.opponentHudLabel.className = opponentP ? "text-xs text-yellow-300 animate-pulse block" : "text-xs text-gray-400 block";
+            
+            // Hide phase if it's opponent's turn
+            DOM.phase.textContent = "Opponent's Turn";
         }
-
-        DOM.phase.textContent = g.phase;
 
         const isSandbox = g.players.length === 1;
         let availableBudget;
@@ -1427,16 +1961,16 @@ const UIManager = {
         if (isSandbox) {
             DOM.energy.textContent = "∞";
             DOM.budget.textContent = "∞";
-            availableBudget = Infinity; // Pass infinity to renderControls
+            availableBudget = Infinity; 
         } else {
             DOM.energy.textContent = g.energyPool;
+            // Local state already has the budget deducted
             const budget = (g.turn === State.playerIndex && g.phase === 'buyMove') ? (g.turnBudget || 0) : 0;
-            availableBudget = budget - State.previewCost;
+            availableBudget = budget; 
             DOM.budget.textContent = availableBudget;
         }
         
-        // Render sub-components
-        UIManager.renderBoard(); // Will use preview state
+        UIManager.renderBoard(); 
         UIManager.renderControls(availableBudget);
         
         // Render Log
@@ -1446,10 +1980,7 @@ const UIManager = {
                 if (typeof logEntry === 'string') {
                     return `<div class="border-b border-gray-700 py-1">${logEntry}</div>`;
                 }
-
-                // Handle new log objects
                 const audience = logEntry.audience;
-
                 if (audience === 'public' || audience === myAudience) {
                     return `<div class="border-b border-gray-700 py-1">${logEntry.msg}</div>`;
                 }
@@ -1462,19 +1993,19 @@ const UIManager = {
     
     renderBoard: () => {
         const g = State.game;
+        if (!g || !g.players) return; // Safety check
+
         DOM.gameBoard.innerHTML = '';
         
-        // MODIFIED: Sandbox mode has different zone rules
+        // Sandbox mode zone logic
         let myZoneStart, myZoneEnd;
         if (g.players.length > 1) {
             myZoneStart = State.playerIndex === 0 ? 0 : 5;
             myZoneEnd = State.playerIndex === 0 ? 5 : 10;
         } else {
-            // Sandbox mode, you own the whole board
             myZoneStart = 0;
             myZoneEnd = 10;
         }
-
 
         for(let r=0; r<CONSTANTS.BOARD_ROWS; r++){
             for(let c=0; c<CONSTANTS.BOARD_COLS; c++){
@@ -1486,58 +2017,30 @@ const UIManager = {
                 if(isMyZone) cell.classList.add(CONSTANTS.COLOR_MAP[g.players[State.playerIndex].color].bg);
                 else cell.classList.add('bg-gray-800/50'); // Shroud style
 
-                // --- New Render Logic (Handles Previews) ---
-
+                // --- RENDER UNITS ---
+                // We now read directly from 'g' (State.game) because we update it locally immediately
                 let unit = GameLogic.getUnitAt(r, c, g);
                 let unitToRender = unit;
                 let isPreview = false;
-                const previewBuilding = State.previewBuildings.find(b => b.location[0] === r && b.location[1] === c);
 
-                // Check if we're rendering my nexus AND there's a preview move
-                if (unit && unit.type === 'nexus' && unit.ownerIdx === State.playerIndex && State.previewNexusLocation) {
-                    // This is the nexus at its *original* spot, but we have a preview move. Hide it.
-                    unitToRender = null; 
-                }
-
-                // 1. Check for preview buildings if cell is empty
-                if (!unit) {
-                    if (previewBuilding) {
-                        unitToRender = { ...previewBuilding, ownerIdx: State.playerIndex, hp: 1 }; // Mock unit
-                        isPreview = true;
-                    }
-                }
-
-                // 2a. Check for preview nexus move in BUYMOVE phase
-                if (!unit && !previewBuilding && State.game.phase === 'buyMove') {
-                        if (State.previewNexusLocation && State.previewNexusLocation[0] === r && State.previewNexusLocation[1] === c) {
-                            unitToRender = { type: 'nexus', ownerIdx: State.playerIndex, hp: g.players[State.playerIndex].nexusHP };
-                            isPreview = true;
-                        }
-                }
-
-                // 2b. Check for preview nexus in SETUP phase
-                if (!unit && !unitToRender && State.currentAction === 'setup') {
-                    if (State.previewNexus && State.previewNexus[0] === r && State.previewNexus[1] === c) {
+                // Special Case: Initial Nexus Setup (Before it exists in players array)
+                if (!unit && State.currentAction === 'setup' && State.previewNexus) {
+                    if (State.previewNexus[0] === r && State.previewNexus[1] === c) {
                         unitToRender = { type: 'nexus', ownerIdx: State.playerIndex, hp: g.players[State.playerIndex].nexusHP };
                         isPreview = true;
                     }
                 }
 
-                // 3. Render the unit (real or preview)
                 if(unitToRender) {
-                    // MODIFIED: FOW logic
                     const isMyUnit = unitToRender.ownerIdx === State.playerIndex;
                     const isOpponentUnit = g.players.length > 1 && !isMyUnit;
 
-                    // Show if:
-                    // 1. It's my unit
-                    // 2. It's in my zone (sandbox = whole board)
-                    // 3. It's an opponent unit *not* in my zone (sandbox never meets this)
+                    // MODIFIED: FOW Logic
+                    // Show if: Mine OR My Zone OR (FOW Disabled AND Local Game)
+                    let showUnit = isMyUnit || isMyZone || (g.fowDisabled && g.isLocal);
                     
-                    let showUnit = isMyUnit || isMyZone;
-                    
-                    // In 2-player, if it's an opponent unit NOT in my zone, hide it
-                    if (g.players.length > 1 && isOpponentUnit && !isMyZone) {
+                    // Standard FOW check (only applies if FOW is NOT disabled)
+                    if (g.players.length > 1 && isOpponentUnit && !isMyZone && !g.fowDisabled) {
                         showUnit = false;
                     }
                     
@@ -1556,7 +2059,7 @@ const UIManager = {
                         }
 
                         const maxHp = unitToRender.type === 'nexus' ? g.nexusHP : CONSTANTS.BUILDING_HP;
-                        // Add "PREVIEW" text and opacity for previewed units
+                        // For setup preview, show "PREVIEW" text
                         const hpDisplay = (isPreview) ? `<div class="absolute bottom-0 right-0 text-[10px] bg-black/80 px-1 text-blue-300">PREVIEW</div>` : `<div class="absolute bottom-0 right-0 text-[10px] bg-black/80 px-1 text-white">${unitToRender.hp}/${maxHp}</div>`;
                         const previewClass = (isPreview) ? 'opacity-75' : '';
                         
@@ -1564,19 +2067,24 @@ const UIManager = {
                     }
                 }
 
-                // 4. Interaction Highlights
-                if(State.currentAction === 'setup' && isMyZone && !unit) cell.classList.add('cursor-pointer', 'hover:bg-white/20');
-                // Check for !unitToRender to prevent highlighting occupied preview cells
-                if(State.currentAction === 'place-pylon' && isMyZone && !unit && !unitToRender) cell.classList.add('cursor-pointer', 'hover:bg-cyan-500/50');
-                if(State.currentAction === 'place-mirror' && isMyZone && !unit && !unitToRender) cell.classList.add('cursor-pointer', 'hover:bg-purple-500/50');
+                // --- HIGHLIGHTS ---
+                
+                // Highlight 1: Valid Move Target (Yellow Pulse)
                 if(State.currentAction === 'move-nexus-target') {
-                    // Check against real units, not preview buildings
                     const isBlocked = GameLogic.getUnitAt(r, c, g); 
-                    if(!isBlocked && GameLogic.isValidNexusMove(State.selectedLocation, [r,c], State.playerIndex, g)) {
+                    // isValidNexusMove now checks State.game, so it accounts for new buildings
+                    if(!isBlocked && GameLogic.isValidNexusMove(State.selectedLocation, [r,c], State.playerIndex, g, [])) {
                         cell.classList.add('cursor-pointer', 'bg-yellow-500/30', 'animate-pulse');
                     }
                 }
-                // --- End New Render Logic ---
+
+                // Highlight 2: Placement Hover Hints (Cursor)
+                const isEmpty = !unit && !unitToRender;
+                if (isMyZone && isEmpty) {
+                    if(State.currentAction === 'setup') cell.classList.add('cursor-pointer', 'hover:bg-white/20');
+                    if(State.currentAction === 'place-pylon') cell.classList.add('cursor-pointer', 'hover:bg-cyan-500/50');
+                    if(State.currentAction === 'place-mirror') cell.classList.add('cursor-pointer', 'hover:bg-purple-500/50');
+                }
 
                 cell.onclick = () => Handlers.boardClick(r, c);
                 DOM.gameBoard.appendChild(cell);
@@ -1601,18 +2109,24 @@ const UIManager = {
         const oldMsg = DOM.$('#setup-waiting-msg');
         if (oldMsg) oldMsg.classList.add('hidden');
 
+        // --- NEW: Dynamic Title Logic ---
+        const titleEl = DOM.$('#control-panel h3'); 
+        if (titleEl) {
+            if (State.currentAction === 'place-pylon') titleEl.textContent = "Place Pylon";
+            else if (State.currentAction === 'place-mirror') titleEl.textContent = "Place Mirror/Set Orientation";
+            else if (State.currentAction === 'move-nexus-target') titleEl.textContent = "Select Nexus Destination";
+            else titleEl.textContent = "CONTROLS"; // Default
+        }
+
         if(g.phase === 'setup') {
             if(!g.players[State.playerIndex].nexusLocation) {
                 if(controls.setup) controls.setup.classList.remove('hidden');
-                // Req #1: Nexus Placement requires confirmation
                 State.currentAction = 'setup'; 
                 
                 const btn = DOM.$('#confirm-nexus-btn');
                 if(btn) {
-                    // Enable button as soon as a preview is set
                     btn.disabled = !State.previewNexus; 
                     btn.textContent = State.previewNexus ? "Confirm Location" : "Select Cell";
-                    // The handler will now use State.previewNexus
                     btn.onclick = () => API.game.placeNexus(State.previewNexus); 
                 }
             } else {
@@ -1628,8 +2142,10 @@ const UIManager = {
             const btnPylon = DOM.$('#place-pylon-btn');
             const btnMirror = DOM.$('#place-mirror-btn');
             const btnMoveNexus = DOM.$('#move-nexus-btn');
+            
+            // Toggle Move Button State
             if (State.currentAction === 'move-nexus-target') {
-                btnMoveNexus.textContent = "Done";
+                btnMoveNexus.textContent = "Cancel Move";
                 btnMoveNexus.classList.add('bg-yellow-500');
                 btnMoveNexus.classList.remove('bg-yellow-600', 'hover:bg-yellow-500');
             } else {
@@ -1637,11 +2153,19 @@ const UIManager = {
                 btnMoveNexus.classList.remove('bg-yellow-500');
                 btnMoveNexus.classList.add('bg-yellow-600', 'hover:bg-yellow-500');
             }
-            const btnUndo = DOM.$('#undo-action-btn'); // New ID
-            const mirrorControls = DOM.$('#mirror-rotation-controls');
-            const separator = DOM.$('#buy-move-separator');
+
+            // Toggle Selection Styles
+            const selectedClass = "ring-2 ring-white scale-105";
+            btnPylon.classList.remove(...selectedClass.split(' '));
+            btnMirror.classList.remove(...selectedClass.split(' '));
             
-            // Req #3: Show/Hide Mirror Controls
+            if (State.currentAction === 'place-pylon') btnPylon.classList.add(...selectedClass.split(' '));
+            if (State.currentAction === 'place-mirror') btnMirror.classList.add(...selectedClass.split(' '));
+
+            const btnUndo = DOM.$('#undo-action-btn'); 
+            const mirrorControls = DOM.$('#mirror-rotation-controls');
+            
+            // Req #2: Show Mirror Controls Immediately
             if (State.currentAction === 'place-mirror') {
                 mirrorControls.classList.remove('hidden');
             } else {
@@ -1650,18 +2174,16 @@ const UIManager = {
         }
         else if (g.phase === 'attack') {
             if(controls.attack) controls.attack.classList.remove('hidden');
-
+            // ... (Existing Attack Direction logic remains unchanged) ...
             let disabledDir = null;
             const myNexusLoc = State.game.players[State.playerIndex]?.nexusLocation;
             const lastPathStr = State.game.lastLaserPath;
 
-            // Disable return-fire rule
             if (g.players.length > 1 && myNexusLoc && lastPathStr) {
                 try {
                     const path = JSON.parse(lastPathStr);
                     const myR = myNexusLoc[0];
                     const myC = myNexusLoc[1];
-
                     const nexusIndexInPath = path.findIndex(loc => loc[0] === myR && loc[1] === myC);
                     if (nexusIndexInPath > 0) {
                         const prevCell = path[nexusIndexInPath - 1];
@@ -1672,9 +2194,7 @@ const UIManager = {
                             return dirVec[0] === returnVec[0] && dirVec[1] === returnVec[1];
                         });
                     }
-                } catch (e) {
-                    console.error("Failed to parse lastLaserPath", 0);
-                }
+                } catch (e) {}
             }
 
             DOM.$$('button[data-dir]').forEach(btn => {
@@ -1851,6 +2371,16 @@ const Handlers = {
             API.lobby.stopListeningToList();
         };
 
+        // NEW: Play vs AI Handler (Calls Local Create)
+        DOM.$('#start-ai-btn').onclick = () => {
+            const energy = DOM.spEnergySelect.value;
+            const hp = DOM.spNexusHpSelect.value;
+            const diff = "Easy"; 
+            const color = State.currentUser.profile.preferredColor;
+            
+            API.lobby.createLocal(energy, hp, diff, color);
+        };
+
         // NEW: Single Player View Handlers
         DOM.$('#singleplayer-back-btn').onclick = () => {
             UIManager.show('lobby');
@@ -1930,8 +2460,17 @@ const Handlers = {
         };
 
         // --- Game Actions ---
-        DOM.$('#place-pylon-btn').onclick = () => { State.currentAction = 'place-pylon'; UIManager.renderBoard(); };
-        DOM.$('#place-mirror-btn').onclick = () => { State.currentAction = 'place-mirror'; UIManager.renderBoard(); };
+        // MODIFIED: Call renderGame() instead of renderBoard() to update the Title and Mirror Controls
+        DOM.$('#place-pylon-btn').onclick = () => { 
+            State.currentAction = 'place-pylon'; 
+            UIManager.renderGame(); 
+        };
+        
+        DOM.$('#place-mirror-btn').onclick = () => { 
+            State.currentAction = 'place-mirror'; 
+            UIManager.renderGame(); 
+        };
+
         DOM.$('#move-nexus-btn').onclick = () => {
             if (State.currentAction === 'move-nexus-target') {
                 State.currentAction = null;
@@ -1943,29 +2482,21 @@ const Handlers = {
             UIManager.renderGame(); // Re-render board and controls
         };
 
-        // This button is now for CONFIRMING placements
+        // Transitions UI to Attack Phase (Local)
         DOM.$('#attack-btn').onclick = () => {
-            const hasBuildingPreviews = State.previewBuildings.length > 0;
-            const hasNexusPreview = !!State.previewNexusLocation;
-
-            if (hasBuildingPreviews || hasNexusPreview) {
-                // Pass both previews to the API function
-                API.game.confirmBuyMovePhase(State.previewBuildings, State.previewNexusLocation);
-            } else {
-                // No previews, just move to attack phase
-                API.game.endPhase();
-            }
+            API.game.endPhase();
         };
 
+        // Commits turn (Firebase)
         DOM.$('#end-turn-btn').onclick = () => {
-            API.game.commitAndEndTurn(State.previewBuildings, State.previewNexusLocation);
+            API.game.commitAndEndTurn();
         };
 
-        DOM.$('#undo-action-btn').onclick = () => {
-            State.previewBuildings = [];
-            State.previewCost = 0;
-            State.previewNexusLocation = null;
-            UIManager.renderGame(); // Re-render everything
+        // Reverts local changes
+        const undoBtn = DOM.$('#undo-action-btn');
+        undoBtn.textContent = "Reset Turn"; 
+        undoBtn.onclick = () => {
+            API.game.resetTurn();
         };
 
         DOM.$$('.mirror-rotate-btn').forEach(btn => {
@@ -2034,75 +2565,59 @@ const Handlers = {
     boardClick: (r, c) => {
         const act = State.currentAction;
         
-        // MODIFIED: Sandbox mode zone
         let isMine;
         if (State.game.players.length > 1) {
             isMine = (c >= (State.playerIndex === 0 ? 0 : 5) && c < (State.playerIndex === 0 ? 5 : 10));
         } else {
-            isMine = true; // Whole board is yours in sandbox
+            isMine = true; 
         }
         
-        // Check for any existing unit (real or preview)
         const realUnit = GameLogic.getUnitAt(r,c, State.game);
-        const previewUnit = State.previewBuildings.find(b => b.location[0] === r && b.location[1] === c);
-        const previewNexus = State.previewNexusLocation && State.previewNexusLocation[0] === r && State.previewNexusLocation[1] === c;
-        const isOccupied = realUnit || previewUnit || previewNexus;
-
-        // Req #1: Nexus setup just updates the preview
+        const myP = State.game.players[State.playerIndex];
+        const isNexus = myP.nexusLocation && myP.nexusLocation[0] === r && myP.nexusLocation[1] === c;
+        
+        // Nexus setup 
         if(act === 'setup' && isMine && !realUnit) { 
             State.previewNexus = [r,c];
             UIManager.renderBoard();
-            UIManager.renderControls(0); // Pass 0, budget not relevant
-            return; // Stop here
+            UIManager.renderControls(0); 
+            return; 
         }
         
-        // --- New Building Placement Logic (Req #2, #4, #5) ---
-        const budget = (State.game.turnBudget || 0) - State.previewCost;
+        const budget = (State.game.turnBudget || 0);
         const isSandbox = State.game.players.length === 1;
         
-        if((act === 'place-pylon' || act === 'place-mirror') && isMine && !isOccupied) {
+        // BUILDING PLACEMENT
+        if((act === 'place-pylon' || act === 'place-mirror') && isMine) {
+            // Logic: Can click if empty OR if replacing a fresh building
+            const isOccupiedByOld = realUnit && (!State.game.turnActions || !State.game.turnActions.some(a => a.action === 'build' && a.location[0]===r && a.location[1]===c));
+            const isNexusOccupied = isNexus;
+
+            if (isNexusOccupied || isOccupiedByOld) {
+                return; // Blocked by Nexus or Old Building
+            }
+
+            // If we get here, it's either empty OR a fresh building (which placeBuilding handles)
+            
             if (!isSandbox) {
-                if (budget < 1) {
-                    UIManager.toast("Out of budget for this turn.");
-                    return;
-                }
-                if (State.game.energyPool - State.previewCost < 1) {
-                    UIManager.toast("Not enough energy in pool.");
-                    return;
-                }
+                // Check for replace refund manually for budget check? 
+                // API.game.placeBuilding handles the refund math logic internally.
+                // We just need a rough check here, or let API handle toast.
             }
 
             const type = act.split('-')[1];
-            const newPreviewBuilding = {
-                type: type,
-                location: [r,c]
-            };
-            
-            if (type === 'mirror') {
-                newPreviewBuilding.orientation = State.currentMirrorOrientation;
-            }
-            
-            State.previewBuildings.push(newPreviewBuilding);
-
-            if (!isSandbox)
-                State.previewCost += 1;
-            
-            // Re-render board and controls (Req #4: allows placing multiples)
-            UIManager.renderGame();
-            return; // Stop here
+            API.game.placeBuilding(type, r, c, State.currentMirrorOrientation);
+            return; 
         }
         
         if(act === 'move-nexus-target') {
-            if(GameLogic.isValidNexusMove(State.selectedLocation, [r,c], State.playerIndex, State.game)) {
-                State.previewNexusLocation = [r,c]; // Set preview instead of API call
+            if(GameLogic.isValidNexusMove(State.selectedLocation, [r,c], State.playerIndex, State.game, [])) {
+                API.game.moveNexus(r, c);
                 State.currentAction = null;
                 State.selectedLocation = null;
             }
-            // Don't return, allow re-render
         }
         
-        // Re-render board/controls if no specific action was taken
-        // This is good for deselecting, etc.
         UIManager.renderGame();
     }
 };
