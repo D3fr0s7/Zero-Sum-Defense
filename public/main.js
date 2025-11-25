@@ -23,14 +23,12 @@ const CONSTANTS = {
         'Pink':   { bg: 'bg-pink-900/20',   stroke: 'stroke-pink-400',    border: 'border-pink-400',    text: 'text-pink-400' },
         'Cyan':   { bg: 'bg-cyan-900/20',   stroke: 'stroke-cyan-400',    border: 'border-cyan-400',    text: 'text-cyan-400' }
     },
-    // Used for Laser Physics Logic (Reflection Map Keys/Values)
     VECTORS: {
         'fromN': "1,0", 'fromNE': "1,-1", 'fromE': "0,-1", 'fromSE': "-1,-1",
         'fromS': "-1,0", 'fromSW': "-1,1", 'fromW': "0,1", 'fromNW': "1,1",
         'toN': [-1, 0], 'toNE': [-1,1], 'toE': [0,1], 'toSE': [1,1],
         'toS': [1,0], 'toSW': [1,-1], 'toW': [0,-1], 'toNW': [-1,-1]
     },
-    // Used for AI and General Direction handling
     DIRECTIONS: {
         'N': [-1, 0], 'NE': [-1, 1], 'E': [0, 1], 'SE': [1, 1],
         'S': [1, 0], 'SW': [1, -1], 'W': [0, -1], 'NW': [-1, -1]
@@ -120,11 +118,9 @@ const State = {
     game: null,        
     playerIndex: -1,
     
-    // Tracker for Context Switches
     lastKnownTurn: -1,
     lastKnownPhase: null,
     
-    // AI Memory
     botMemory: {
         wasHitLastTurn: false,
         lastHitMirror: null
@@ -133,7 +129,11 @@ const State = {
     currentAction: null,
     selectedLocation: null,
     currentMirrorOrientation: 'N',
-    previewNexus: null, // Only used during setup phase
+    previewNexus: null, 
+    
+    pendingAnimation: null, 
+    pendingPreviousPlayers: null,
+    isAnimating: false,
     
     subs: {
         game: null,
@@ -147,13 +147,12 @@ const State = {
 };
 
 // ==========================================
-// 3. DOM ELEMENTS (Cached)
+// 3. DOM ELEMENTS
 // ==========================================
 const DOM = {
     $: (s) => document.querySelector(s),
     $$: (s) => document.querySelectorAll(s),
     
-    // Views
     views: {
         profile: document.querySelector('#profile-view'),
         lobby: document.querySelector('#lobby-view'),
@@ -164,26 +163,21 @@ const DOM = {
         modal: document.querySelector('#modal-view')
     },
     
-    // Inputs & Dynamic Areas
     lobbyListContainer: document.querySelector('#lobby-list-container'),
     onlineLists: document.querySelectorAll('.online-players-list'),
     gameBoard: document.querySelector('#game-board'),
     gameLog: document.querySelector('#game-log'),
 
-    // Lobby View
     lobbyNameDisplay: document.querySelector('#lobby-user-name-display'),
     lobbyNameEdit: document.querySelector('#lobby-user-name-edit'),
     lobbyNameInput: document.querySelector('#lobby-name-input'),
     lobbyColorInput: document.querySelector('#lobby-color-input'),
     
-    // SP View
     spEnergySelect: document.querySelector('#sp-energy-select'),
     spNexusHpSelect: document.querySelector('#sp-nexus-hp-select'),
 
-    // Waiting Room
     waitingNexusHpSelect: document.querySelector('#waiting-nexus-hp-select'),
 
-    // Text Displays
     userId: document.querySelector('#user-id-display'),
     userName: document.querySelector('#user-display-name-display'),
     gameId: document.querySelector('#game-id-display'),
@@ -206,11 +200,9 @@ const GameLogic = {
         for (let i = 0; i < gameData.players.length; i++) {
             const p = gameData.players[i];
             if (!p) continue;
-            // Check Nexus
             if (p.nexusLocation && p.nexusLocation[0] === r && p.nexusLocation[1] === c) {
                 return { type: 'nexus', hp: p.nexusHP, ownerIdx: i };
             }
-            // Check Buildings
             const b = p.buildings.find(b => b.location[0] === r && b.location[1] === c);
             if (b) return { ...b, ownerIdx: i };
         }
@@ -221,11 +213,9 @@ const GameLogic = {
         if (!startLoc || !targetLoc) return false;
         const p = gameData.players[playerIndex];
         
-        // 1. Always calc range from the Start of Turn location
         const [rS, cS] = p.nexusStartLoc || startLoc; 
         const [rT, cT] = targetLoc;
 
-        // Zone check
         if (gameData.players.length > 1) {
             const myZoneStart = (playerIndex === 0) ? 0 : 5;
             const myZoneEnd = (playerIndex === 0) ? 5 : CONSTANTS.BOARD_COLS;
@@ -234,12 +224,10 @@ const GameLogic = {
             }
         }
         
-        // 2. Pathfinding must ignore the player's *current* Nexus location as an obstacle
         const pathDist = GameLogic.findShortestPath([rS, cS], [rT, cT], gameData, playerIndex);
         if (pathDist > CONSTANTS.NEXUS_RANGE) return false;
 
         const unit = GameLogic.getUnitAt(rT, cT, gameData);
-        // Target must be empty or self
         if (unit && unit.type !== 'nexus') return false;
         if (unit && unit.type === 'nexus' && unit.ownerIdx !== playerIndex) return false;
         
@@ -250,7 +238,7 @@ const GameLogic = {
         const [startR, startC] = startLoc;
         const [targetR, targetC] = targetLoc;
 
-        let queue = [[startR, startC, 0]]; // [r, c, distance]
+        let queue = [[startR, startC, 0]]; 
         let visited = new Set();
         visited.add(`${startR},${startC}`);
 
@@ -401,14 +389,12 @@ const AILogic = {
             return 'OK';
         };
 
-        // 1. SETUP PHASE
         if (!myP.nexusLocation) {
             const r = Math.floor(Math.random() * CONSTANTS.BOARD_ROWS);
             const c = Math.floor(Math.random() * 2) + 8; 
             return { isSetup: true, nexusLoc: [r, c] };
         }
 
-        // 2. MOVEMENT DECISION
         let needsMove = State.botMemory.wasHitLastTurn;
         
         if (!needsMove) {
@@ -440,7 +426,6 @@ const AILogic = {
             }
         }
 
-        // 3. BUILD PHASE
         let buildAttempts = 0;
         while (turnBudget > 0 && energyPool > 0 && buildAttempts < 10) {
             buildAttempts++;
@@ -470,7 +455,6 @@ const AILogic = {
             }
         }
 
-        // 4. ATTACK SELECTION
         const simGame = JSON.parse(JSON.stringify(gameData));
         const simBot = simGame.players[botIndex];
         
@@ -513,7 +497,7 @@ const AILogic = {
 };
 
 // ==========================================
-// 5. API LAYER (Firebase Interactions)
+// 5. API LAYER
 // ==========================================
 const API = {
     init: async () => {
@@ -689,10 +673,48 @@ const API = {
             API.game.listen(ref.id);
             return ref.id; 
         },
-        createLocal: (energy, hp, diff, color) => {
+        createLocal: (energy, hp, diff, color, isPassAndPlay = false) => {
+            const players = [
+                {
+                    userId: 'P1',
+                    displayName: isPassAndPlay ? "Player 1" : State.currentUser.profile.displayName,
+                    color: color,
+                    nexusLocation: null,
+                    nexusHP: parseInt(hp),
+                    buildings: [],
+                    isReady: true 
+                }
+            ];
+
+            if (isPassAndPlay) {
+                const p2Color = (color === 'Red' ? 'Blue' : (color === 'Blue' ? 'Red' : 'Blue'));
+                players.push({
+                    userId: 'P2',
+                    displayName: "Player 2",
+                    color: p2Color,
+                    nexusLocation: null,
+                    nexusHP: parseInt(hp),
+                    buildings: [],
+                    isReady: true
+                });
+            } else {
+                players.push({
+                    userId: 'BOT',
+                    displayName: `Easy AI`,
+                    color: (color === 'Red' ? 'Blue' : 'Red'),
+                    nexusLocation: null,
+                    nexusHP: parseInt(hp),
+                    buildings: [],
+                    isBot: true,
+                    difficulty: diff,
+                    isReady: true
+                });
+            }
+
             State.game = {
-                isLocal: true, 
-                lobbyName: "Singleplayer",
+                isLocal: true,
+                isPassAndPlay: isPassAndPlay,
+                lobbyName: isPassAndPlay ? "Pass & Play" : "Singleplayer",
                 status: 'waitingForHostStart',
                 phase: 'setup',
                 maxEnergy: parseInt(energy),
@@ -703,31 +725,11 @@ const API = {
                 turnBudget: 0,
                 turnActions: [],
                 log: ["Local Match Created."],
-                players: [
-                    {
-                        userId: 'ME',
-                        displayName: State.currentUser.profile.displayName,
-                        color: color,
-                        nexusLocation: null,
-                        nexusHP: parseInt(hp),
-                        buildings: [],
-                        isReady: true 
-                    },
-                    {
-                        userId: 'BOT',
-                        displayName: `Easy AI`,
-                        color: (color === 'Red' ? 'Blue' : 'Red'),
-                        nexusLocation: null,
-                        nexusHP: parseInt(hp),
-                        buildings: [],
-                        isBot: true,
-                        difficulty: diff,
-                        isReady: true
-                    }
-                ]
+                players: players
             };
             State.playerIndex = 0;
             State.gameId = "LOCAL_MATCH"; 
+            State.pendingAnimation = null;
             
             UIManager.show('waitingRoom');
             UIManager.renderWaitingRoom();
@@ -773,6 +775,13 @@ const API = {
         },
         leave: async () => {
             if(!State.gameId) return;
+            if (State.game && State.game.isLocal) {
+                State.game = null;
+                State.gameId = null;
+                UIManager.show('lobbyList');
+                return;
+            }
+
             const ref = doc(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games', State.gameId);
 
             const snap = await getDoc(ref);
@@ -834,23 +843,22 @@ const API = {
 
     game: {
         startSandbox: async (energy, nexusHP) => {
-            const coll = collection(State.db, 'artifacts', CONSTANTS.APP_ID, 'public', 'data', 'zero_sum_games');
-            const gameData = {
+            State.game = {
+                isLocal: true,
+                isPassAndPlay: false,
                 lobbyName: "Sandbox Mode",
                 status: 'inProgress',
                 phase: 'setup',
-                createdAt: Date.now(),
                 maxEnergy: parseInt(energy),
                 energyPool: parseInt(energy),
                 nexusHP: parseInt(nexusHP),
-                pendingEnergyRefund: 0,
+                fowDisabled: false,
                 turn: 0,
-                lastShotVector: null,
+                turnBudget: 0,
                 turnActions: [],
-                log: [`Sandbox Mode started.`],
-                lastUpdated: Date.now(),
+                log: ["Local Sandbox Started."],
                 players: [{
-                    userId: State.currentUser.uid,
+                    userId: 'ME',
                     displayName: State.currentUser.profile.displayName,
                     color: State.currentUser.profile.preferredColor,
                     nexusLocation: null,
@@ -859,9 +867,11 @@ const API = {
                     isReady: true 
                 }]
             };
-            const ref = await addDoc(coll, gameData);
-            API.game.listen(ref.id);
-            return ref.id;
+            State.playerIndex = 0;
+            State.gameId = "LOCAL_SANDBOX";
+            
+            UIManager.show('game');
+            UIManager.renderGame();
         },
 
         listen: (id) => {
@@ -888,7 +898,6 @@ const API = {
                 }
 
                 const updateAndRender = (dataToRender) => {
-                    // Context Switch Detection
                     if (dataToRender.turn !== State.lastKnownTurn || dataToRender.phase !== State.lastKnownPhase) {
                         State.currentAction = null;
                         State.selectedLocation = null;
@@ -901,7 +910,6 @@ const API = {
                     State.game = JSON.parse(JSON.stringify(dataToRender));
                     State.playerIndex = State.game.players.findIndex(p => p.userId === State.currentUser.uid);
 
-                    // --- AI TRIGGER LOGIC ---
                     const currentPlayer = State.game.players[State.game.turn];
                     const isHost = State.playerIndex === 0; 
                     
@@ -998,7 +1006,7 @@ const API = {
                 const p = State.game.players[State.playerIndex];
                 p.nexusLocation = loc;
                 p.nexusStartLoc = loc;
-                State.game.log.push("Nexus Placed.");
+                State.game.log.push(`${p.displayName} placed Nexus.`);
                 
                 const bot = State.game.players[1];
                 if (bot && bot.isBot && !bot.nexusLocation) {
@@ -1006,13 +1014,38 @@ const API = {
                     bot.nexusLocation = botData.nexusLoc;
                     bot.nexusStartLoc = botData.nexusLoc;
                 }
+                
+                if (State.game.isPassAndPlay) {
+                    const p1 = State.game.players[0];
+                    const p2 = State.game.players[1];
 
-                if (p.nexusLocation && bot.nexusLocation) {
+                    if (p1.nexusLocation && !p2.nexusLocation) {
+                        State.playerIndex = 1;
+                        UIManager.showIntermission("Player 2", "Place your Nexus");
+                        return;
+                    } else if (p1.nexusLocation && p2.nexusLocation) {
+                        State.playerIndex = 0;
+                        State.game.phase = 'buyMove';
+                        State.game.energyPool = State.game.maxEnergy;
+                        State.game.turnBudget = Math.min(1, State.game.maxEnergy);
+                        State.game.log.push("Nexus placement complete.");
+                        State.serverState = JSON.parse(JSON.stringify(State.game));
+                        UIManager.showIntermission("Player 1", "Begin Turn");
+                        return;
+                    }
+                }
+
+                // Sandbox Mode Check
+                const isSandbox = State.game.players.length === 1;
+                const allReady = isSandbox ? !!p.nexusLocation : (p.nexusLocation && bot.nexusLocation);
+
+                if (allReady) {
                     State.game.phase = 'buyMove';
                     State.game.energyPool = State.game.maxEnergy;
                     State.game.turnBudget = Math.min(1, State.game.maxEnergy);
-                    State.game.log.push("Both Nexus placed. Phase: Buy/Move");
+                    if (isSandbox) State.game.turnBudget = 99;
                     
+                    State.game.log.push("Nexus placed. Phase: Buy/Move");
                     State.serverState = JSON.parse(JSON.stringify(State.game));
                 }
                 
@@ -1054,7 +1087,6 @@ const API = {
             if (existingActionIndex !== -1) {
                 const oldAction = State.game.turnActions[existingActionIndex];
                 refund = oldAction.cost;
-                
                 State.game.turnActions.splice(existingActionIndex, 1);
                 myP.buildings = myP.buildings.filter(b => !(b.location[0] === r && b.location[1] === c));
             }
@@ -1070,56 +1102,44 @@ const API = {
             if (type === 'mirror') newBuilding.orientation = orientation;
             
             myP.buildings.push(newBuilding);
-
             const cost = isSandbox ? 0 : 1;
-            
             State.game.turnBudget = currentBudget - cost;
             State.game.energyPool = currentEnergy - cost;
             
             if (!State.game.turnActions) State.game.turnActions = [];
             State.game.turnActions.push({ action: 'build', type, location: [r,c], cost });
-
             UIManager.renderGame(); 
         },
 
         moveNexus: (r, c) => {
             const myP = State.game.players[State.playerIndex];
             const oldLoc = myP.nexusLocation;
-
             myP.nexusLocation = [r, c];
-            
             if (!State.game.turnActions) State.game.turnActions = [];
             State.game.turnActions.push({ action: 'moveNexus', prevLocation: oldLoc });
-
             UIManager.renderGame();
         },
 
         resetTurn: () => {
             if (!State.serverState) return;
             State.game = JSON.parse(JSON.stringify(State.serverState));
-            
             State.currentAction = null;
             State.selectedLocation = null;
-            
             UIManager.toast("Turn reset.");
             UIManager.renderGame();
         },
 
         endPhase: () => {
             State.game.phase = 'attack';
-            
             State.currentAction = null;
             State.selectedLocation = null;
-            
             UIManager.renderGame();
         },
 
         cancelAttack: () => {
             State.game.phase = 'buyMove';
-            
             State.currentAction = null;
             State.selectedLocation = null;
-            
             UIManager.renderGame();
         },
 
@@ -1163,9 +1183,15 @@ const API = {
             if (currentG.isLocal) {
                 Object.assign(State.game, updates);
                 State.serverState = JSON.parse(JSON.stringify(State.game));
-                UIManager.renderGame();
-                if (newP[nextTurn].isBot) {
-                    setTimeout(() => API.game.executeBotTurn(), 1000);
+                
+                if (currentG.isPassAndPlay) {
+                    State.playerIndex = nextTurn; 
+                    UIManager.showIntermission(`Player ${nextTurn + 1}`, "Begin Turn");
+                } else {
+                    UIManager.renderGame();
+                    if (newP[nextTurn].isBot) {
+                        setTimeout(() => API.game.executeBotTurn(), 1000);
+                    }
                 }
                 return;
             }
@@ -1176,10 +1202,15 @@ const API = {
         attack: async (dx, dy) => {
             try {
                 const currentG = State.game;
-                const startLoc = currentG.players[State.playerIndex].nexusLocation;
+                const shooterIdx = State.playerIndex;
+                const startLoc = currentG.players[shooterIdx].nexusLocation;
                 const { path, hits, log } = GameLogic.traceLaser(startLoc, [dx, dy], currentG);
                 
                 const newP = JSON.parse(JSON.stringify(currentG.players));
+                let previousPlayersState = null;
+                if (currentG.isPassAndPlay) {
+                    previousPlayersState = JSON.parse(JSON.stringify(currentG.players));
+                }
                 let destroyedCount = 0;
                 let gameOver = false;
                 let winner = -1;
@@ -1200,7 +1231,6 @@ const API = {
                     }
                 });
 
-                const shooterIdx = State.playerIndex;
                 const currentEscrow = Number(newP[shooterIdx].escrow) || 0;
                 newP[shooterIdx].escrow = currentEscrow + destroyedCount;
 
@@ -1243,7 +1273,24 @@ const API = {
                     Object.assign(State.game, updates);
                     State.serverState = JSON.parse(JSON.stringify(State.game)); 
                     
-                    const shooterColor = currentG.players[State.playerIndex].color;
+                    const shooterColor = currentG.players[shooterIdx].color;
+                    
+                    if (currentG.isPassAndPlay) {
+                        UIManager.animateLaser(path, shooterColor, () => {
+                            if (gameOver) {
+                                UIManager.renderGame();
+                                return;
+                            }
+                            // Store the Snapshot
+                            State.pendingPreviousPlayers = previousPlayersState; // <--- Store snapshot
+                            State.pendingAnimation = { path, color: shooterColor, vector: [dx, dy] };
+                            
+                            State.playerIndex = nextTurn;
+                            UIManager.showIntermission(`Player ${nextTurn + 1}`, "Begin Turn");
+                        }, [dx, dy]);
+                        return;
+                    }
+
                     UIManager.animateLaser(path, shooterColor, () => {
                         UIManager.renderGame();
                         if (!gameOver && newP[nextTurn].isBot) {
@@ -1296,6 +1343,14 @@ const API = {
                 State.serverState = JSON.parse(JSON.stringify(State.game));
                 State.currentAction = null;
                 State.selectedLocation = null;
+                
+                if (currentG.isPassAndPlay) {
+                    State.pendingAnimation = null; 
+                    State.playerIndex = nextTurn;
+                    UIManager.showIntermission(`Player ${nextTurn + 1}`, "Begin Turn");
+                    return;
+                }
+
                 UIManager.renderGame();
                 if (newP[nextTurn].isBot) {
                     setTimeout(() => API.game.executeBotTurn(), 1000);
@@ -1311,26 +1366,17 @@ const API = {
             const botIdx = g.turn;
             const botData = AILogic.computeTurn(g, botIdx);
             
-            if (g.phase === 'setup') {
-                return;
-            }
+            if (g.phase === 'setup') return;
 
             const simGame = JSON.parse(JSON.stringify(g));
             const botP = simGame.players[botIdx];
-            
             let spend = 0;
 
             botData.actions.forEach(act => {
                 if (act.action === 'build') {
-                    botP.buildings.push({ 
-                        type: act.type, 
-                        location: act.location, 
-                        orientation: act.orientation,
-                        hp: CONSTANTS.BUILDING_HP 
-                    });
+                    botP.buildings.push({ type: act.type, location: act.location, orientation: act.orientation, hp: CONSTANTS.BUILDING_HP });
                     spend += (Number(act.cost) || 0);
-                } 
-                else if (act.action === 'moveNexus') {
+                } else if (act.action === 'moveNexus') {
                     botP.nexusLocation = act.location;
                     botP.nexusStartLoc = act.location;
                 }
@@ -1342,19 +1388,14 @@ const API = {
             let winner = -1;
             let attackDir = null;
 
-            if (botData.skipAttack) {
-            } else {
+            if (!botData.skipAttack) {
                 attackDir = botData.attackDir;
                 const startLoc = botP.nexusLocation;
                 const trace = GameLogic.traceLaser(startLoc, attackDir, simGame);
                 path = trace.path;
                 
                 const mirrorHit = trace.hits.find(h => h.type === 'mirror');
-                if (mirrorHit) {
-                    State.botMemory.lastHitMirror = `${mirrorHit.location[0]},${mirrorHit.location[1]}`;
-                } else {
-                    State.botMemory.lastHitMirror = null;
-                }
+                State.botMemory.lastHitMirror = mirrorHit ? `${mirrorHit.location[0]},${mirrorHit.location[1]}` : null;
 
                 trace.hits.forEach(h => {
                     if (h.type === 'nexus') {
@@ -1381,7 +1422,6 @@ const API = {
 
             const escrowRelease = Number(nextPlayer.escrow) || 0;
             nextPlayer.escrow = 0;
-            
             const startPool = Number(g.energyPool) || 0;
             const currentPoolAfterSpend = startPool - spend;
             const newEnergyPool = currentPoolAfterSpend + escrowRelease;
@@ -1430,7 +1470,6 @@ const API = {
 
         updateSettings: async (newName, newEnergy, newNexusHP, newDifficulty) => {
             if (State.playerIndex !== 0) return; 
-
             const newP = JSON.parse(JSON.stringify(State.game.players));
             let newLogs = [...State.game.log];
 
@@ -1470,24 +1509,63 @@ const API = {
 };
 
 // ==========================================
-// 6. UI MANAGER (Rendering)
+// 6. UI MANAGER
 // ==========================================
 const UIManager = {
     getEdgeCoords: (dr, dc) => {
-        if (dr === 0 && dc === 1) return ["0%", "50%"]; // from W
-        if (dr === 0 && dc === -1) return ["100%", "50%"]; // from E
-        if (dr === 1 && dc === 0) return ["50%", "0%"]; // from N
-        if (dr === -1 && dc === 0) return ["50%", "100%"]; // from S
-        if (dr === 1 && dc === 1) return ["0%", "0%"]; // from NW
-        if (dr === 1 && dc === -1) return ["100%", "0%"]; // from NE
-        if (dr === -1 && dc === 1) return ["0%", "100%"]; // from SW
-        if (dr === -1 && dc === -1) return ["100%", "100%"]; // from SE
-        return ["50%", "50%"]; // Center/Fallback
+        if (dr === 0 && dc === 1) return ["0%", "50%"];
+        if (dr === 0 && dc === -1) return ["100%", "50%"];
+        if (dr === 1 && dc === 0) return ["50%", "0%"];
+        if (dr === -1 && dc === 0) return ["50%", "100%"];
+        if (dr === 1 && dc === 1) return ["0%", "0%"];
+        if (dr === 1 && dc === -1) return ["100%", "0%"];
+        if (dr === -1 && dc === 1) return ["0%", "100%"];
+        if (dr === -1 && dc === -1) return ["100%", "100%"];
+        return ["50%", "50%"];
+    },
+    getScorchLinesHTML: (r, c, prev, next, laserVector) => {
+        let lines = [];
+        if (!prev && next) { // Start (Nexus)
+            let dr_out, dc_out;
+            if (laserVector) { [dr_out, dc_out] = laserVector; }
+            else { dr_out = next[0] - r; dc_out = next[1] - c; }
+            const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
+            lines.push(`<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" />`);
+        } else if (prev) {
+            const dr_in = r - prev[0];
+            const dc_in = c - prev[1];
+            const dr_out = next ? (next[0] - r) : 0;
+            const dc_out = next ? (next[1] - c) : 0;
+
+            const isWallReflect_In = (dr_in !== 0 && dc_in !== 0) && (dr_out === 0 && dc_out !== 0);
+            const isWallReflect_Out = (dr_in === 0 && dc_in !== 0) && (dr_out !== 0 && dc_out !== 0);
+            const isReflection = next && (dr_in !== dr_out || dc_in !== dc_out) && !isWallReflect_In && !isWallReflect_Out;
+            const isPassthrough = next && !isReflection && !isWallReflect_In && !isWallReflect_Out;
+            const isHit = !next;
+
+            const [x_in, y_in] = UIManager.getEdgeCoords(dr_in, dc_in);
+
+            if (isWallReflect_In) {
+                const [x_out, y_out] = UIManager.getEdgeCoords(dr_in * -1, dc_in * -1);
+                lines.push(`<line x1="${x_in}" y1="${y_in}" x2="${x_out}" y2="${y_out}" />`);
+            } else if (isWallReflect_Out) {
+                const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
+                const [x_in_new, y_in_new] = UIManager.getEdgeCoords(dr_out, dc_out);
+                lines.push(`<line x1="${x_in_new}" y1="${y_in_new}" x2="${x_out}" y2="${y_out}" />`);
+            } else if (isPassthrough || isHit) {
+                const endPt = isPassthrough ? UIManager.getEdgeCoords(dr_out * -1, dc_out * -1) : ["50%", "50%"];
+                lines.push(`<line x1="${x_in}" y1="${y_in}" x2="${endPt[0]}" y2="${endPt[1]}" />`);
+            } else if (isReflection) {
+                const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
+                lines.push(`<line x1="${x_in}" y1="${y_in}" x2="50%" y2="50%" />`);
+                lines.push(`<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" />`);
+            }
+        }
+        return lines.join('');
     },
     show: (viewName) => {
         Object.values(DOM.views).forEach(v => v.classList.add('hidden'));
         if(DOM.views[viewName]) DOM.views[viewName].classList.remove('hidden');
-        
         if(viewName === 'lobbyList' || viewName === 'singleplayer') API.presence.setStatus('Available');
         else if (viewName === 'game' || viewName === 'waitingRoom') API.presence.setStatus('Busy');
     },
@@ -1508,8 +1586,57 @@ const UIManager = {
     showModal: (msg, isEndGame) => {
         DOM.modalMsg.innerHTML = `<p>${msg}</p>`;
         DOM.$$('.modal-dynamic-btn').forEach(btn => btn.remove());
-        
         DOM.$('#new-game-btn').classList.toggle('hidden', !isEndGame);
+        DOM.views.modal.classList.remove('hidden');
+    },
+    showIntermission: (playerName, actionText) => {
+        DOM.views.game.classList.add('hidden');
+        DOM.views.waitingRoom.classList.add('hidden');
+
+        DOM.modalMsg.innerHTML = `
+            <h2 class="text-3xl font-bold mb-4 text-cyan-400">${playerName}</h2>
+            <p class="text-gray-300 mb-6">${actionText}</p>
+        `;
+        
+        DOM.$$('.modal-dynamic-btn').forEach(btn => btn.remove());
+        const btnContainer = document.createElement('div');
+        btnContainer.className = "flex justify-center mt-4 modal-dynamic-btn";
+        
+        const readyBtn = document.createElement('button');
+        readyBtn.className = "bg-green-600 hover:bg-green-500 text-white font-bold py-3 px-8 rounded-lg text-xl";
+        readyBtn.textContent = "I Am Ready";
+        readyBtn.onclick = () => {
+            DOM.views.modal.classList.add('hidden');
+            DOM.views.game.classList.remove('hidden'); 
+            
+            if (State.pendingAnimation && State.pendingPreviousPlayers) {
+                const { path, color, vector } = State.pendingAnimation;
+                const actualPlayers = State.game.players;
+                const snapshotPlayers = State.pendingPreviousPlayers;
+
+                State.game.players = snapshotPlayers;
+                
+                State.isAnimating = true;
+                
+                UIManager.renderGame(); 
+                
+                UIManager.animateLaser(path, color, () => {
+                    State.game.players = actualPlayers;
+                    
+                    State.pendingAnimation = null; 
+                    State.pendingPreviousPlayers = null;
+                    
+                    UIManager.renderGame(); 
+                }, vector);
+            } else {
+                UIManager.renderGame();
+            }
+        };
+        
+        btnContainer.appendChild(readyBtn);
+        DOM.modalMsg.appendChild(btnContainer);
+        
+        DOM.$('#new-game-btn').classList.add('hidden');
         DOM.views.modal.classList.remove('hidden');
     },
     populateColors: (select) => {
@@ -1594,8 +1721,9 @@ const UIManager = {
         const isBotGame = p2 && p2.isBot;
         const isLocal = g.isLocal;
 
-        // === 1. Layout & Visibility Adjustments ===
-        
+        // Pass & Play Tweaks
+        const isPassAndPlay = g.isPassAndPlay;
+
         const sidebar = DOM.$('#waiting-room-view > div:last-child'); 
         if (sidebar) sidebar.classList.toggle('hidden', isBotGame || isLocal);
         const lobbyNameContainer = DOM.$('#lobby-name-container');
@@ -1612,7 +1740,6 @@ const UIManager = {
             fowContainer.classList.add('hidden');
         }
 
-        // === 2. Settings Panel ===
         const hostPanel = DOM.$('#host-settings-panel');
         const lobbyNameInput = DOM.$('#waiting-lobby-name-input');
         const energySelect = DOM.$('#waiting-energy-pool-select');
@@ -1656,15 +1783,8 @@ const UIManager = {
             nexusHpSelect.onchange = updateSettings;
             aiDiffSelect.onchange = updateSettings;
             fowCheckbox.onchange = updateSettings;
-        } else {
-            lobbyNameInput.disabled = true;
-            energySelect.disabled = true;
-            nexusHpSelect.disabled = true;
-            aiDiffSelect.disabled = true;
-            fowCheckbox.disabled = true;
         }
 
-        // === 3. Player Boxes ===
         DOM.$('#waiting-lobby-name').textContent = g.lobbyName;
 
         const renderBox = (p, prefix, index) => {
@@ -1684,7 +1804,10 @@ const UIManager = {
             }
 
             const isMe = index === State.playerIndex;
-            const isMyBot = isHost && p.isBot; 
+            const isMyBot = isHost && p.isBot;
+            
+            // Allow changing P2 color in Pass & Play
+            const canEdit = isMe || isMyBot || (isPassAndPlay && isHost); 
 
             nameEl.textContent = p.displayName + (isMe ? " (You)" : "");
             nameEl.classList.remove('text-gray-500');
@@ -1692,9 +1815,9 @@ const UIManager = {
             sel.classList.remove('hidden');
             if (sel.options.length === 0) UIManager.populateColors(sel);
             sel.value = p.color;
-            sel.disabled = !(isMe || isMyBot); 
+            sel.disabled = !canEdit; 
 
-            if(isMe || isMyBot) {
+            if(canEdit) {
                 sel.onchange = async (e) => {
                     const newP = [...State.game.players];
                     const otherPlayer = newP[(index + 1) % 2];
@@ -1728,7 +1851,6 @@ const UIManager = {
         renderBox(p1, 'p1', 0);
         renderBox(p2, 'p2', 1);
         
-        // === 4. Main Button ===
         const mainBtn = DOM.$('#start-game-btn');
         mainBtn.classList.remove('hidden');
         
@@ -1857,56 +1979,14 @@ const UIManager = {
 
                 // --- 1. RENDER SCORCHED TRAIL ---
                 let scorchSVG = '';
-                const isScorchVisible = isMyZone || (g.fowDisabled && g.isLocal);
+                const isScorchVisible = (isMyZone || (g.fowDisabled && g.isLocal)) && !State.isAnimating;
 
                 if (laserPath && isScorchVisible) {
                     laserPath.forEach((loc, i) => {
                         if (loc[0] === r && loc[1] === c) {
                             const prev = laserPath[i-1];
                             const next = laserPath[i+1];
-                            let lines = [];
-
-                            if (i === 0 && next) {
-                                let dr_out, dc_out;
-                                if (laserVector) {
-                                    [dr_out, dc_out] = laserVector;
-                                } else {
-                                    dr_out = next[0] - r; dc_out = next[1] - c;
-                                }
-                                const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
-                                lines.push(`<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" />`);
-                            } else if (prev) {
-                                const dr_in = r - prev[0];
-                                const dc_in = c - prev[1];
-                                const dr_out = next ? (next[0] - r) : 0;
-                                const dc_out = next ? (next[1] - c) : 0;
-
-                                const isWallReflect_In = (dr_in !== 0 && dc_in !== 0) && (dr_out === 0 && dc_out !== 0);
-                                const isWallReflect_Out = (dr_in === 0 && dc_in !== 0) && (dr_out !== 0 && dc_out !== 0);
-                                const isReflection = next && (dr_in !== dr_out || dc_in !== dc_out) && !isWallReflect_In && !isWallReflect_Out;
-                                const isPassthrough = next && !isReflection && !isWallReflect_In && !isWallReflect_Out;
-                                const isHit = !next;
-
-                                const [x_in, y_in] = UIManager.getEdgeCoords(dr_in, dc_in);
-
-                                if (isWallReflect_In) {
-                                    const [x_out, y_out] = UIManager.getEdgeCoords(dr_in * -1, dc_in * -1);
-                                    lines.push(`<line x1="${x_in}" y1="${y_in}" x2="${x_out}" y2="${y_out}" />`);
-                                } else if (isWallReflect_Out) {
-                                    const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
-                                    const [x_in_new, y_in_new] = UIManager.getEdgeCoords(dr_out, dc_out);
-                                    lines.push(`<line x1="${x_in_new}" y1="${y_in_new}" x2="${x_out}" y2="${y_out}" />`);
-                                } else if (isPassthrough || isHit) {
-                                    const endPt = isPassthrough ? UIManager.getEdgeCoords(dr_out * -1, dc_out * -1) : ["50%", "50%"];
-                                    lines.push(`<line x1="${x_in}" y1="${y_in}" x2="${endPt[0]}" y2="${endPt[1]}" />`);
-                                } else if (isReflection) {
-                                    const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
-                                    lines.push(`<line x1="${x_in}" y1="${y_in}" x2="50%" y2="50%" />`);
-                                    lines.push(`<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" />`);
-                                }
-                            }
-                            
-                            lines.forEach(l => scorchSVG += l);
+                            scorchSVG += UIManager.getScorchLinesHTML(r, c, prev, next, laserVector);
                         }
                     });
                 }
@@ -1993,7 +2073,6 @@ const UIManager = {
             if(el) el.classList.add('hidden');
         });
 
-        // Dynamic Title Logic
         const titleEl = DOM.$('#control-panel h3'); 
         if (titleEl) {
             if (State.currentAction === 'place-pylon') titleEl.textContent = "Place Pylon";
@@ -2045,7 +2124,6 @@ const UIManager = {
             if (State.currentAction === 'place-mirror') btnMirror.classList.add(...selectedClass.split(' '));
 
             const mirrorControls = DOM.$('#mirror-rotation-controls');
-            
             if (State.currentAction === 'place-mirror') {
                 mirrorControls.classList.remove('hidden');
             } else {
@@ -2092,6 +2170,8 @@ const UIManager = {
     
     animateLaser: (path, colorName, onCompleteCallback, shotVector) => {
         const hex = CONSTANTS.LASER_COLORS[colorName] || '#ff0000';
+        
+        State.isAnimating = true; 
 
         DOM.$$('.laser-beam-svg').forEach(el => el.remove());
         DOM.$$('.laser-active').forEach(el => el.classList.remove('laser-active'));
@@ -2108,23 +2188,23 @@ const UIManager = {
         let i = 0;
         const pulseSpeed = '0.5s';
         const pulseDelayStep = 0.05;
+        
         const interval = setInterval(() => {
             if(i >= path.length) { 
                 clearInterval(interval); 
-
                 let j = 0;
                 const fadeInterval = setInterval(() => {
                     const segment = DOM.$(`[data-laser-step="${j}"]`);
                     if (segment) segment.remove();
-
                     j++;
-
                     if (j >= path.length) {
                         clearInterval(fadeInterval); 
+                        
+                        State.isAnimating = false; 
+                        
                         if (onCompleteCallback) onCompleteCallback(); 
                     }
                 }, 120);
-
                 return;
             }
 
@@ -2133,72 +2213,37 @@ const UIManager = {
             const next = (i + 1 < path.length) ? path[i+1] : null;
 
             const isMySide = (c >= myZoneStart && c < myZoneEnd);
-            if (State.game.players.length === 1 || isMySide) {
+            // Respect FOW: Only show if my side, or sandbox, or FOW disabled
+            const isVisible = (State.game.players.length === 1) || isMySide || State.game.fowDisabled;
+
+            if (isVisible) {
                 const cell = DOM.$(`[data-r="${r}"][data-c="${c}"]`);
 
                 if(cell) { 
                     cell.style.setProperty('--laser-color', hex);
+                    
+                    const scorchLines = UIManager.getScorchLinesHTML(r, c, prev, next, shotVector);
+                    if (scorchLines) {
+                        const scorchContainer = document.createElement('div');
+                        scorchContainer.className = "absolute inset-0 z-0 pointer-events-none animate-fade-in";
+                        scorchContainer.innerHTML = `<svg width="100%" height="100%" stroke="black" stroke-width="8" stroke-opacity="0.4" stroke-linecap="round">${scorchLines}</svg>`;
+                        cell.prepend(scorchContainer);
+                    }
+
                     let svgHTML = '';
                     if (i === 0 && next) {
                         let dr_out, dc_out;
-                        if (shotVector) {
-                            [dr_out, dc_out] = shotVector; 
-                        } else {
-                            dr_out = next[0] - r;
-                            dc_out = next[1] - c;
-                        }
+                        if (shotVector) { [dr_out, dc_out] = shotVector; } 
+                        else { dr_out = next[0] - r; dc_out = next[1] - c; }
                         const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
                         const delay = i * pulseDelayStep;
                         const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
                         svgHTML = `<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
                     } else if (prev) {
-                        const dr_in = r - prev[0];
-                        const dc_in = c - prev[1];
-                        const isHit = !next;
-                        const dr_out = next ? (next[0] - r) : 0;
-                        const dc_out = next ? (next[1] - c) : 0;
-
-                        const isDiagonalIn = dr_in !== 0 && dc_in !== 0;
-                        const isHorizontalOut = dr_out === 0 && dc_out !== 0;
-                        const isHorizontalIn = dr_in === 0 && dc_in !== 0;
-                        const isDiagonalOut = dr_out !== 0 && dc_out !== 0;
-
-                        const isWallReflect_In = isDiagonalIn && isHorizontalOut;
-                        const isWallReflect_Out = isHorizontalIn && isDiagonalOut;
-
-                        const isReflection = next && (dr_in !== dr_out || dc_in !== dc_out) && !isWallReflect_In && !isWallReflect_Out;
-                        const isPassthrough = next && !isReflection && !isWallReflect_In && !isWallReflect_Out;
-
-                        const [x_in, y_in] = UIManager.getEdgeCoords(dr_in, dc_in);
-
-                        if (isWallReflect_In) {
-                            const [x_out, y_out] = UIManager.getEdgeCoords(dr_in * -1, dc_in * -1);
-                            const delay = i * pulseDelayStep;
-                            const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
-                            svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
-                        } else if (isWallReflect_Out) {
-                            const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
-                            const [x_in_new, y_in_new] = UIManager.getEdgeCoords(dr_out, dc_out);
-                            const delay = i * pulseDelayStep;
-                            const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
-                            svgHTML = `<line x1="${x_in_new}" y1="${y_in_new}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
-                        }
-                        else if (isPassthrough) {
-                            const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
-                            const delay = i * pulseDelayStep;
-                            const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
-                            svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
-                        } else if (isReflection) {
-                            const [x_out, y_out] = UIManager.getEdgeCoords(dr_out * -1, dc_out * -1);
-                            const delay = i * pulseDelayStep;
-                            const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
-                            svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="50%" y2="50%" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />` +
-                                      `<line x1="50%" y1="50%" x2="${x_out}" y2="${y_out}" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
-                        } else if (isHit) {
-                            const delay = i * pulseDelayStep;
-                            const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
-                            svgHTML = `<line x1="${x_in}" y1="${y_in}" x2="50%" y2="50%" stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" />`;
-                        }
+                        const lines = UIManager.getScorchLinesHTML(r, c, prev, next, shotVector);
+                        const delay = i * pulseDelayStep;
+                        const animStyle = `animation: laser-wave-pulse ${pulseSpeed} ease-in-out infinite; animation-delay: ${delay}s;`;
+                        svgHTML = lines.replace(/<line /g, `<line stroke="${hex}" stroke-width="15" stroke-linecap="round" style="${animStyle}" `);
                     }
 
                     const svg = document.createElement('div');
@@ -2227,6 +2272,27 @@ const Handlers = {
         };
 
         DOM.$('#single-player-btn').onclick = () => {
+            // Add Pass & Play Button dynamically if not present
+            const spContainer = DOM.$('#singleplayer-view .space-y-4.mt-6');
+            if (!DOM.$('#start-pass-play-btn')) {
+                const btn = document.createElement('button');
+                btn.id = 'start-pass-play-btn';
+                btn.className = "w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-4 rounded-lg shadow-lg";
+                btn.textContent = "Pass & Play (Local)";
+                
+                // Insert before 'Play vs AI'
+                const aiBtn = DOM.$('#start-ai-btn');
+                spContainer.insertBefore(btn, aiBtn);
+                
+                btn.onclick = () => {
+                    const energy = DOM.spEnergySelect.value;
+                    const hp = DOM.spNexusHpSelect.value;
+                    const color = State.currentUser.profile.preferredColor;
+                    // Pass true for isPassAndPlay
+                    API.lobby.createLocal(energy, hp, "Easy", color, true);
+                };
+            }
+
             UIManager.show('singleplayer');
             API.presence.stop();
             API.lobby.stopListeningToList();
@@ -2237,8 +2303,7 @@ const Handlers = {
             const hp = DOM.spNexusHpSelect.value;
             const diff = "Easy"; 
             const color = State.currentUser.profile.preferredColor;
-            
-            API.lobby.createLocal(energy, hp, diff, color);
+            API.lobby.createLocal(energy, hp, diff, color, false);
         };
 
         DOM.$('#singleplayer-back-btn').onclick = () => {
@@ -2277,7 +2342,6 @@ const Handlers = {
             const defaultEnergy = 10;
             const defaultNexusHP = 3; 
             const defaultColor = State.currentUser.profile.preferredColor;
-            
             await API.lobby.create(defaultName, defaultEnergy, defaultColor, defaultNexusHP);
         };
 
