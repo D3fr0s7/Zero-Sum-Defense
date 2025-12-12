@@ -499,17 +499,10 @@ const AILogic = {
 // ==========================================
 // 5. API LAYER
 // ==========================================
+import { firebaseConfig } from "./config.js";
 const API = {
     init: async () => {
-        const config = {
-            apiKey: "AIzaSyBTK04oSfdM5K0w8sspYn42OQzCGFf8AMM",
-            authDomain: "zero-sum-defense.firebaseapp.com",
-            projectId: "zero-sum-defense",
-            storageBucket: "zero-sum-defense.firebasestorage.app",
-            messagingSenderId: "484724724929",
-            appId: "1:484724724929:web:104009b0c91ee8559a3040"
-        };
-        const app = initializeApp(config);
+        const app = initializeApp(firebaseConfig);
         State.db = getFirestore(app);
         State.auth = getAuth(app);
         setLogLevel('error'); 
